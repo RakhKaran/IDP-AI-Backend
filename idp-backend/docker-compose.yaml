@@ -1,0 +1,63 @@
+---
+services:
+  # MySQL for IDP backend
+  idp-mysql:
+    image: mysql:8.0
+    container_name: idp_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: idp_db
+      MYSQL_USER: idp_user
+      MYSQL_PASSWORD: idp123@dbpassword
+    ports:
+      - "3307:3306"
+    volumes:
+      - idp-mysql-data:/var/lib/mysql
+    networks:
+      - idp_net
+
+  # FastAPI backend
+  fastapi:
+    build:
+      context: .                  
+      dockerfile: docker/fastapi/Dockerfile
+    container_name: idp_fastapi
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - idp-mysql
+    networks:
+      - idp_net
+      - default
+
+  # Apache NiFi
+  nifi:
+    image: apache/nifi:latest
+    container_name: idp_nifi
+    ports:
+      - "8081:8080"
+    environment:
+      NIFI_WEB_HTTP_PORT: 8080
+      NIFI_WEB_HTTPS_PORT: ""         # < disables HTTPS
+    command: >
+      bash -c "
+        sed -i 's/nifi.web.https.port=.*/nifi.web.https.port=/' /opt/nifi/nifi-current/conf/nifi.properties &&
+        sed -i 's/nifi.web.http.port=.*/nifi.web.http.port=8080/' /opt/nifi/nifi-current/conf/nifi.properties &&
+        /opt/nifi/nifi-current/bin/nifi.sh run"
+    volumes:
+      - nifi_data:/opt/nifi/nifi-current
+    restart: always
+    networks:
+      - idp_net
+      - default
+
+volumes:
+  nifi_data:
+  idp-mysql-data:
+
+networks:
+  idp_net:
+    driver: bridge

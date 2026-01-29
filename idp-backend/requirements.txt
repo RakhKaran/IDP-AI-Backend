@@ -1,0 +1,66 @@
+# ----------------------
+# Core Framework
+# ----------------------
+fastapi
+uvicorn[standard]
+
+# ----------------------
+# Database
+# ----------------------
+sqlalchemy
+aiomysql
+pymysql
+alembic  # for database migrations
+
+# ----------------------
+# Pydantic & Config
+# ----------------------
+pydantic
+pydantic-settings
+python-dotenv
+
+# ----------------------
+# OpenAI Integration
+# ----------------------
+openai==0.28
+
+# ----------------------
+# HTTP Requests
+# ----------------------
+httpx
+requests
+
+# ----------------------
+# Logging & Monitoring
+# ----------------------
+loguru
+
+# ----------------------
+# Optional: Validation, Task Tools
+# ----------------------
+python-multipart    # for file upload if needed
+email-validator  # for user email validation if needed
+
+# ----------------------
+# Testing
+# ----------------------
+pytest
+httpx[cli]
+pytest-asyncio
+
+# ----------------------
+# Development Utilities (Optional)
+# ----------------------
+black
+ruff
+
+# ----------------------
+# Airflow provider
+# ----------------------
+apache-airflow-providers-mysql==4.0.0
+apache-airflow==2.8.1
+
+email-validator
+
+
+
