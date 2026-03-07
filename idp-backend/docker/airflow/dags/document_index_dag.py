@@ -16,6 +16,7 @@ MCP_ENDPOINT = os.getenv("MCP_ENDPOINT", "http://13.203.33.247:8002/mcp")
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
 MCP_JSONRPC_METHOD = os.getenv("MCP_JSONRPC_METHOD", "tools/call")
+MCP_PROTOCOL_VERSION = os.getenv("MCP_PROTOCOL_VERSION", "2024-11-05")
 
 MONGO_URI = os.getenv("MONGO_URI")
 mongo_client = MongoClient(MONGO_URI)
@@ -103,10 +104,74 @@ def _get_or_create_collection_id(process_instance_id, cursor, process_instance_d
     return collection_id, context_payload, context_path
 
 
-def _invoke_mcp_tool(tool_name, arguments):
-    headers = {"Content-Type": "application/json"}
+def _parse_mcp_response(response):
+    try:
+        return response.json()
+    except ValueError:
+        for raw_line in response.text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data:
+                continue
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                continue
+    raise RuntimeError("Unable to parse MCP response body")
+
+
+def _initialize_mcp_session():
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
     if MCP_AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": f"initialize-{int(time.time() * 1000)}",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {
+                "name": "airflow-client",
+                "version": "1.0",
+            },
+        },
+    }
+
+    response = requests.post(
+        MCP_ENDPOINT,
+        json=payload,
+        headers=headers,
+        timeout=MCP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+
+    mcp_session_id = response.headers.get("mcp-session-id")
+    if not mcp_session_id:
+        raise RuntimeError("MCP initialize succeeded but mcp-session-id header is missing")
+
+    body = _parse_mcp_response(response)
+    if body.get("error"):
+        raise RuntimeError(f"MCP initialize returned error: {body['error']}")
+
+    return mcp_session_id, body
+
+
+def _invoke_mcp_tool(tool_name, arguments, mcp_session_id):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"
+    }
+    if MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+    if mcp_session_id:
+        headers["mcp-session-id"] = mcp_session_id
 
     payload_variants = [
         {
@@ -141,7 +206,7 @@ def _invoke_mcp_tool(tool_name, arguments):
             )
             print("response on invoke mcp : ", response)
             response.raise_for_status()
-            body = response.json()
+            body = _parse_mcp_response(response)
             if body.get("error"):
                 raise RuntimeError(f"MCP returned error: {body['error']}")
             return body
@@ -218,6 +283,9 @@ def run_document_index(**context):
         collection_id, mcp_context, context_path = _get_or_create_collection_id(
             process_instance_id, cursor, process_instance_dir
         )
+        mcp_session_id, initialize_response = _initialize_mcp_session()
+        mcp_context["mcp_session_id"] = mcp_session_id
+        mcp_context["mcp_initialize_response"] = initialize_response
 
         index_mode = (node_component.get("indexMode") or "process_documents").strip()
         document_type = (node_component.get("documentType") or "digital").strip()
@@ -249,7 +317,7 @@ def run_document_index(**context):
 
             tool_name = "process_documents"
             tool_args = {
-                "file_paths": pdf_files,
+                "files": pdf_files,
                 "collection_id": collection_id,
                 "document_type": document_type,
                 "is_contract": is_contract,
@@ -258,10 +326,10 @@ def run_document_index(**context):
         log_to_mongo(
             process_instance_id,
             "Document Index",
-            f"Calling MCP tool '{tool_name}' with collection_id={collection_id}",
+            f"Calling MCP tool '{tool_name}' with collection_id={collection_id} and mcp_session_id={mcp_session_id}",
             log_type=0,
         )
-        mcp_response = _invoke_mcp_tool(tool_name, tool_args)
+        mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
 
         response_path = os.path.join(process_instance_dir, "mcp_document_index_response.json")
         _write_json(response_path, mcp_response)

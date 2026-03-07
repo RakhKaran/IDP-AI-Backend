@@ -16,6 +16,7 @@ MCP_ENDPOINT = os.getenv("MCP_ENDPOINT", "http://13.203.33.247:8002/mcp")
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
 MCP_JSONRPC_METHOD = os.getenv("MCP_JSONRPC_METHOD", "tools/call")
+MCP_PROTOCOL_VERSION = os.getenv("MCP_PROTOCOL_VERSION", "2024-11-05")
 
 MONGO_URI = os.getenv("MONGO_URI")
 mongo_client = MongoClient(MONGO_URI)
@@ -82,10 +83,74 @@ def _find_node_component(blueprint, candidate_names):
     return {}
 
 
-def _invoke_mcp_tool(tool_name, arguments):
-    headers = {"Content-Type": "application/json"}
+def _parse_mcp_response(response):
+    try:
+        return response.json()
+    except ValueError:
+        for raw_line in response.text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data:
+                continue
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                continue
+    raise RuntimeError("Unable to parse MCP response body")
+
+
+def _initialize_mcp_session():
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
     if MCP_AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": f"initialize-{int(time.time() * 1000)}",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {
+                "name": "airflow-client",
+                "version": "1.0",
+            },
+        },
+    }
+
+    response = requests.post(
+        MCP_ENDPOINT,
+        json=payload,
+        headers=headers,
+        timeout=MCP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+
+    mcp_session_id = response.headers.get("mcp-session-id")
+    if not mcp_session_id:
+        raise RuntimeError("MCP initialize succeeded but mcp-session-id header is missing")
+
+    body = _parse_mcp_response(response)
+    if body.get("error"):
+        raise RuntimeError(f"MCP initialize returned error: {body['error']}")
+
+    return mcp_session_id, body
+
+
+def _invoke_mcp_tool(tool_name, arguments, mcp_session_id):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+    if mcp_session_id:
+        headers["mcp-session-id"] = mcp_session_id
 
     payload_variants = [
         {
@@ -118,7 +183,7 @@ def _invoke_mcp_tool(tool_name, arguments):
                 timeout=MCP_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
-            body = response.json()
+            body = _parse_mcp_response(response)
             if body.get("error"):
                 raise RuntimeError(f"MCP returned error: {body['error']}")
             return body
@@ -161,6 +226,9 @@ def run_document_query(**context):
     collection_id = mcp_context.get("collection_id")
     if not collection_id:
         raise ValueError("collection_id not found. Run Document Index node before Document Query")
+    mcp_session_id, initialize_response = _initialize_mcp_session()
+    mcp_context["mcp_session_id"] = mcp_session_id
+    mcp_context["mcp_initialize_response"] = initialize_response
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()
@@ -217,10 +285,10 @@ def run_document_query(**context):
         log_to_mongo(
             process_instance_id,
             "Document Query",
-            f"Calling MCP tool '{query_mode}' with collection_id={collection_id}",
+            f"Calling MCP tool '{query_mode}' with collection_id={collection_id} and mcp_session_id={mcp_session_id}",
             log_type=0,
         )
-        mcp_response = _invoke_mcp_tool(query_mode, tool_args)
+        mcp_response = _invoke_mcp_tool(query_mode, tool_args, mcp_session_id)
 
         response_path = os.path.join(process_instance_dir, "mcp_document_query_response.json")
         _write_json(response_path, mcp_response)
