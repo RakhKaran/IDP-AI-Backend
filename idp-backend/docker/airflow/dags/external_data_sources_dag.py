@@ -417,6 +417,58 @@ def _call_databricks_tool(tool_name, parameters):
     return _post_mcp("/call_tool", payload)
 
 
+def _connect_snowflake_mcp(component):
+    account = str(component.get("snowflakeAccount", "")).strip()
+    user = str(component.get("snowflakeUser", "")).strip()
+    password = str(component.get("snowflakePassword", "")).strip()
+    warehouse = str(component.get("snowflakeWarehouse", "")).strip()
+
+    if not account:
+        raise ValueError("Snowflake account is required")
+    if not user:
+        raise ValueError("Snowflake user is required")
+    if not password:
+        raise ValueError("Snowflake password is required")
+    if not warehouse:
+        raise ValueError("Snowflake warehouse is required")
+
+    snowflake_env = {
+        "SNOWFLAKE_ACCOUNT": account,
+        "SNOWFLAKE_USER": user,
+        "SNOWFLAKE_PASSWORD": password,
+        "SNOWFLAKE_WAREHOUSE": warehouse,
+    }
+    database = str(component.get("snowflakeDatabase", "")).strip()
+    schema = str(component.get("snowflakeSchema", "")).strip()
+    role = str(component.get("snowflakeRole", "")).strip()
+    if database:
+        snowflake_env["SNOWFLAKE_DATABASE"] = database
+    if schema:
+        snowflake_env["SNOWFLAKE_SCHEMA"] = schema
+    if role:
+        snowflake_env["SNOWFLAKE_ROLE"] = role
+
+    connect_payload = {
+        "mcpServers": {
+            "snowflake-server": {
+                "command": "/usr/local/bin/python",
+                "args": ["/app/mcp_server.py"],
+                "env": snowflake_env,
+                "transport": "stdio",
+            }
+        }
+    }
+    return _post_mcp("/connect_mcp", connect_payload)
+
+
+def _call_snowflake_tool(tool_name, parameters):
+    payload = {
+        "tool_name": tool_name,
+        "parameters": parameters or {},
+    }
+    return _post_mcp("/call_tool", payload)
+
+
 def _find_first_list(value):
     if isinstance(value, list):
         return value
@@ -474,6 +526,31 @@ def _build_databricks_statement(component):
     if query_or_filter:
         return f"SELECT * FROM {dataset} WHERE {query_or_filter} LIMIT {limit}"
     return f"SELECT * FROM {dataset} LIMIT {limit}"
+
+
+def _build_snowflake_sql(component):
+    dataset = str(component.get("bigDataDataset", "")).strip()
+    query_or_filter = str(component.get("bigDataQueryFilter", "")).strip()
+    database = str(component.get("snowflakeDatabase", "")).strip()
+    schema = str(component.get("snowflakeSchema", "")).strip()
+    limit = int(component.get("bigDataLimit", 100) or 100)
+    limit = max(1, min(limit, 10000))
+
+    if query_or_filter:
+        lowered = query_or_filter.lower()
+        if lowered.startswith(("select", "with", "show", "describe", "desc")):
+            return query_or_filter
+
+    if not dataset:
+        raise ValueError("Snowflake requires Dataset/Table when query is not full SQL")
+
+    table_ref = dataset
+    if "." not in dataset and database and schema:
+        table_ref = f"{database}.{schema}.{dataset}"
+
+    if query_or_filter:
+        return f"SELECT * FROM {table_ref} WHERE {query_or_filter} LIMIT {limit}"
+    return f"SELECT * FROM {table_ref} LIMIT {limit}"
 
 
 def _run_bigdata_databricks_connector(component, process_instance_id, process_instance_dir):
@@ -541,6 +618,50 @@ def _run_bigdata_databricks_connector(component, process_instance_id, process_in
     )
 
 
+def _run_bigdata_snowflake_connector(component, process_instance_id, process_instance_dir):
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        "Connecting Snowflake MCP server via /connect_mcp",
+        log_type=0,
+    )
+    connect_response = _connect_snowflake_mcp(component)
+
+    sql = _build_snowflake_sql(component)
+    execute_response = _call_snowflake_tool(
+        "Snowflake.execute_query",
+        {"sql": sql},
+    )
+
+    result_payload = {
+        "sourceType": "bigdata",
+        "bigDataType": "snowflake",
+        "mcp_base_url": EXTERNAL_MCP_BASE_URL,
+        "connect_response": connect_response,
+        "execute_response": execute_response,
+        "sql": sql,
+        "database": str(component.get("snowflakeDatabase", "")).strip(),
+        "schema": str(component.get("snowflakeSchema", "")).strip(),
+        "warehouse": str(component.get("snowflakeWarehouse", "")).strip(),
+    }
+    response_path = os.path.join(process_instance_dir, "external_data_sources_bigdata_snowflake_response.json")
+    _write_json(response_path, result_payload)
+
+    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+    mcp_context = _read_json(mcp_context_path, {})
+    mcp_context["external_data_sources_response_path"] = response_path
+    mcp_context["external_data_sources_type"] = "bigdata"
+    mcp_context["external_data_sources_bigdata_type"] = "snowflake"
+    _write_json(mcp_context_path, mcp_context)
+
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        "Snowflake big data connector executed successfully via MCP",
+        log_type=2,
+    )
+
+
 def _run_bigdata_connector(component, process_instance_id, process_instance_dir):
     big_data_type = str(component.get("bigDataType", "")).strip().lower()
     if big_data_type == "databricks":
@@ -548,7 +669,8 @@ def _run_bigdata_connector(component, process_instance_id, process_instance_dir)
         return
 
     if big_data_type == "snowflake":
-        raise NotImplementedError("Snowflake MCP integration is pending tool schema mapping.")
+        _run_bigdata_snowflake_connector(component, process_instance_id, process_instance_dir)
+        return
 
     raise ValueError(f"Unsupported bigDataType '{big_data_type}'")
 
