@@ -479,7 +479,9 @@ def _run_bigdata_databricks_connector(component, process_instance_id, process_in
     connect_response = _connect_databricks_mcp(component)
 
     warehouses_response = _call_databricks_tool("Databricks.list_sql_warehouses", {})
+    print("warehouses_response : ", warehouses_response)
     warehouse_id = _pick_warehouse_id(warehouses_response)
+    print("warehouse_id : ", warehouse_id)
     if not warehouse_id:
         raise RuntimeError("No Databricks SQL warehouse found from MCP response")
 
