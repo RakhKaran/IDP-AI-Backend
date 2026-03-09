@@ -433,6 +433,19 @@ def _find_first_list(value):
 
 
 def _pick_warehouse_id(warehouses_response):
+    # MCP sometimes returns JSON inside content[0]["text"]
+    try:
+        content = warehouses_response.get("result", {}).get("content", [])
+        if content and isinstance(content, list):
+            text_payload = content[0].get("text")
+            if isinstance(text_payload, str):
+                parsed = json.loads(text_payload)
+                warehouses = parsed.get("warehouses", [])
+                if warehouses:
+                    return warehouses[0].get("id", "")
+    except Exception as e:
+        print("Failed to parse MCP warehouses response:", e)
+
     warehouses = _find_first_list(warehouses_response)
     for item in warehouses:
         if not isinstance(item, dict):
@@ -440,6 +453,7 @@ def _pick_warehouse_id(warehouses_response):
         warehouse_id = item.get("id") or item.get("warehouse_id")
         if isinstance(warehouse_id, str) and warehouse_id.strip():
             return warehouse_id.strip()
+
     return ""
 
 
