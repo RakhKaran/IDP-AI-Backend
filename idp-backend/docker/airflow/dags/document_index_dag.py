@@ -249,6 +249,56 @@ def _extract_document_ids(mcp_response):
     return unique_ids
 
 
+def _extract_mcp_tool_error(mcp_response):
+    if not isinstance(mcp_response, dict):
+        return ""
+
+    result = mcp_response.get("result")
+    if not isinstance(result, dict):
+        return ""
+    if not result.get("isError"):
+        return ""
+
+    content = result.get("content", [])
+    error_lines = []
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                error_lines.append(text.strip())
+
+    if error_lines:
+        return "\n".join(error_lines)
+    return "MCP tool returned isError=true"
+
+
+def _raise_if_mcp_tool_error(mcp_response):
+    error_text = _extract_mcp_tool_error(mcp_response)
+    if error_text:
+        raise RuntimeError(error_text)
+
+
+def _should_retry_with_upload(error_text):
+    if not isinstance(error_text, str):
+        return False
+
+    lowered = error_text.lower()
+    retry_markers = [
+        "uploadfile",
+        "expected uploadfile",
+        "file_paths",
+        "files.0",
+        "no such file",
+        "not found",
+        "does not exist",
+        "cannot access",
+        "permission denied",
+    ]
+    return any(marker in lowered for marker in retry_markers)
+
+
 def run_document_index(**context):
     process_instance_id = context["dag_run"].conf.get("id")
     if not process_instance_id:
@@ -317,7 +367,7 @@ def run_document_index(**context):
 
             tool_name = "process_documents"
             tool_args = {
-                "files": pdf_files,
+                "file_paths": pdf_files,
                 "collection_id": collection_id,
                 "document_type": document_type,
                 "is_contract": is_contract,
@@ -329,7 +379,36 @@ def run_document_index(**context):
             f"Calling MCP tool '{tool_name}' with collection_id={collection_id} and mcp_session_id={mcp_session_id}",
             log_type=0,
         )
-        mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
+        if tool_name == "process_documents":
+            try:
+                mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
+                _raise_if_mcp_tool_error(mcp_response)
+            except Exception as process_exc:
+                process_error = str(process_exc)
+                if not _should_retry_with_upload(process_error):
+                    raise
+
+                fallback_tool_name = "upload_documents"
+                fallback_args = {
+                    "files": tool_args["file_paths"],
+                    "collection_id": collection_id,
+                    "document_type": document_type,
+                    "is_contract": is_contract,
+                }
+                log_to_mongo(
+                    process_instance_id,
+                    "Document Index",
+                    "process_documents failed, retrying with upload_documents fallback",
+                    log_type=0,
+                    remark=process_error[:2000],
+                )
+                mcp_response = _invoke_mcp_tool(fallback_tool_name, fallback_args, mcp_session_id)
+                _raise_if_mcp_tool_error(mcp_response)
+                tool_name = fallback_tool_name
+                tool_args = fallback_args
+        else:
+            mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
+            _raise_if_mcp_tool_error(mcp_response)
 
         response_path = os.path.join(process_instance_dir, "mcp_document_index_response.json")
         _write_json(response_path, mcp_response)
