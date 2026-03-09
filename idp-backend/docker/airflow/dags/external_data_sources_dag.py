@@ -16,6 +16,8 @@ load_dotenv()
 
 LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
 EXTERNAL_DATA_TIMEOUT_SECONDS = int(os.getenv("EXTERNAL_DATA_TIMEOUT_SECONDS", "60"))
+EXTERNAL_MCP_BASE_URL = os.getenv("EXTERNAL_MCP_BASE_URL", "https://mcp.jnanic.com").rstrip("/")
+MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 
 MONGO_URI = os.getenv("MONGO_URI")
 mongo_client = MongoClient(MONGO_URI)
@@ -361,16 +363,178 @@ def _run_db_connector_placeholder(component, process_instance_id):
     raise NotImplementedError("DB connector execution is pending MCP integration.")
 
 
-def _run_bigdata_connector_placeholder(component, process_instance_id):
-    big_data_type = component.get("bigDataType") or "unknown"
+def _mcp_headers():
+    headers = {"Content-Type": "application/json"}
+    if MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+    return headers
+
+
+def _post_mcp(path, payload):
+    response = requests.post(
+        f"{EXTERNAL_MCP_BASE_URL}{path}",
+        headers=_mcp_headers(),
+        json=payload,
+        timeout=EXTERNAL_DATA_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError:
+        return {"raw_text": response.text}
+
+
+def _connect_databricks_mcp(component):
+    workspace_url = str(component.get("databricksWorkspaceUrl", "")).strip()
+    databricks_token = str(component.get("databricksToken", "")).strip()
+
+    if not workspace_url:
+        raise ValueError("Databricks workspace URL is required")
+    if not databricks_token:
+        raise ValueError("Databricks token is required")
+
+    connect_payload = {
+        "mcpServers": {
+            "databricks-server": {
+                "command": "/usr/local/bin/python",
+                "args": ["/app/mcp_server.py"],
+                "env": {
+                    "DATABRICKS_HOST": workspace_url,
+                    "DATABRICKS_TOKEN": databricks_token,
+                },
+                "transport": "stdio",
+            }
+        }
+    }
+    return _post_mcp("/connect_mcp", connect_payload)
+
+
+def _call_databricks_tool(tool_name, parameters):
+    payload = {
+        "tool_name": tool_name,
+        "parameters": parameters or {},
+    }
+    return _post_mcp("/call_tool", payload)
+
+
+def _find_first_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in ("warehouses", "items", "data", "result", "value"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return nested
+            if isinstance(nested, dict):
+                child = _find_first_list(nested)
+                if child:
+                    return child
+    return []
+
+
+def _pick_warehouse_id(warehouses_response):
+    warehouses = _find_first_list(warehouses_response)
+    for item in warehouses:
+        if not isinstance(item, dict):
+            continue
+        warehouse_id = item.get("id") or item.get("warehouse_id")
+        if isinstance(warehouse_id, str) and warehouse_id.strip():
+            return warehouse_id.strip()
+    return ""
+
+
+def _build_databricks_statement(component):
+    dataset = str(component.get("bigDataDataset", "")).strip()
+    query_or_filter = str(component.get("bigDataQueryFilter", "")).strip()
+    limit = int(component.get("bigDataLimit", 100) or 100)
+    limit = max(1, min(limit, 10000))
+
+    if query_or_filter:
+        lowered = query_or_filter.lower()
+        if lowered.startswith("select") or lowered.startswith("with"):
+            return query_or_filter
+
+    if not dataset:
+        raise ValueError("Databricks requires Dataset/Table when query is not full SQL")
+
+    if query_or_filter:
+        return f"SELECT * FROM {dataset} WHERE {query_or_filter} LIMIT {limit}"
+    return f"SELECT * FROM {dataset} LIMIT {limit}"
+
+
+def _run_bigdata_databricks_connector(component, process_instance_id, process_instance_dir):
+    catalog = str(component.get("databricksCatalog", "")).strip()
+    schema = str(component.get("databricksSchema", "")).strip()
+    if not catalog:
+        raise ValueError("Databricks catalog is required")
+    if not schema:
+        raise ValueError("Databricks schema is required")
+
     log_to_mongo(
         process_instance_id,
         "External Data Sources",
-        f"Big Data connector selected ({big_data_type}). MCP mapping placeholder reached.",
-        log_type=3,
-        remark="TODO: implement MCP big data connector mapping and invocation",
+        "Connecting Databricks MCP server via /connect_mcp",
+        log_type=0,
     )
-    raise NotImplementedError("Big Data connector execution is pending MCP integration.")
+    connect_response = _connect_databricks_mcp(component)
+
+    warehouses_response = _call_databricks_tool("Databricks.list_sql_warehouses", {})
+    warehouse_id = _pick_warehouse_id(warehouses_response)
+    if not warehouse_id:
+        raise RuntimeError("No Databricks SQL warehouse found from MCP response")
+
+    statement = _build_databricks_statement(component)
+    execute_response = _call_databricks_tool(
+        "Databricks.execute_sql_statement",
+        {
+            "warehouse_id": warehouse_id,
+            "statement": statement,
+            "catalog": catalog,
+            "schema": schema,
+            "wait_timeout": "30s",
+        },
+    )
+
+    result_payload = {
+        "sourceType": "bigdata",
+        "bigDataType": "databricks",
+        "mcp_base_url": EXTERNAL_MCP_BASE_URL,
+        "connect_response": connect_response,
+        "warehouses_response": warehouses_response,
+        "execute_response": execute_response,
+        "statement": statement,
+        "warehouse_id": warehouse_id,
+        "catalog": catalog,
+        "schema": schema,
+    }
+    response_path = os.path.join(process_instance_dir, "external_data_sources_bigdata_databricks_response.json")
+    _write_json(response_path, result_payload)
+
+    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+    mcp_context = _read_json(mcp_context_path, {})
+    mcp_context["external_data_sources_response_path"] = response_path
+    mcp_context["external_data_sources_type"] = "bigdata"
+    mcp_context["external_data_sources_bigdata_type"] = "databricks"
+    _write_json(mcp_context_path, mcp_context)
+
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        "Databricks big data connector executed successfully via MCP",
+        log_type=2,
+    )
+
+
+def _run_bigdata_connector(component, process_instance_id, process_instance_dir):
+    big_data_type = str(component.get("bigDataType", "")).strip().lower()
+    if big_data_type == "databricks":
+        _run_bigdata_databricks_connector(component, process_instance_id, process_instance_dir)
+        return
+
+    if big_data_type == "snowflake":
+        raise NotImplementedError("Snowflake MCP integration is pending tool schema mapping.")
+
+    raise ValueError(f"Unsupported bigDataType '{big_data_type}'")
 
 
 def run_external_data_sources(**context):
@@ -412,7 +576,7 @@ def run_external_data_sources(**context):
         elif source_type == "db":
             _run_db_connector_placeholder(component, process_instance_id)
         elif source_type == "bigdata":
-            _run_bigdata_connector_placeholder(component, process_instance_id)
+            _run_bigdata_connector(component, process_instance_id, process_instance_dir)
         else:
             raise ValueError(f"Unsupported sourceType '{source_type}' in External Data Sources node")
 
