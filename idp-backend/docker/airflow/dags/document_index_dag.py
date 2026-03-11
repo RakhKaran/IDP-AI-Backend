@@ -104,6 +104,14 @@ def _get_or_create_collection_id(process_instance_id, cursor, process_instance_d
     return collection_id, context_payload, context_path
 
 
+def _get_process_id(process_instance_id, cursor):
+    cursor.execute("SELECT processesId FROM ProcessInstances WHERE id = %s", (process_instance_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"Process instance not found: {process_instance_id}")
+    return str(row[0])
+
+
 def _parse_mcp_response(response):
     try:
         return response.json()
@@ -226,6 +234,10 @@ def _as_bool(value, default=False):
     return bool(value)
 
 
+def _as_mcp_bool_string(value, default=False):
+    return "true" if _as_bool(value, default=default) else "false"
+
+
 def _extract_document_ids(mcp_response):
     candidates = []
     result = mcp_response.get("result", {}) if isinstance(mcp_response, dict) else {}
@@ -247,6 +259,14 @@ def _extract_document_ids(mcp_response):
         if isinstance(doc_id, str) and doc_id not in unique_ids:
             unique_ids.append(doc_id)
     return unique_ids
+
+
+def _extract_tasks(mcp_response):
+    result = mcp_response.get("result", {}) if isinstance(mcp_response, dict) else {}
+    tasks = result.get("tasks", []) if isinstance(result, dict) else []
+    if not isinstance(tasks, list):
+        return []
+    return [task for task in tasks if isinstance(task, dict)]
 
 
 def _extract_mcp_tool_error(mcp_response):
@@ -330,16 +350,18 @@ def run_document_index(**context):
         if not node_component:
             raise ValueError("Document Index node not found in blueprint")
 
+        process_id = _get_process_id(process_instance_id, cursor)
         collection_id, mcp_context, context_path = _get_or_create_collection_id(
             process_instance_id, cursor, process_instance_dir
         )
+        mcp_context["process_id"] = process_id
         mcp_session_id, initialize_response = _initialize_mcp_session()
         mcp_context["mcp_session_id"] = mcp_session_id
         mcp_context["mcp_initialize_response"] = initialize_response
 
         index_mode = (node_component.get("indexMode") or "process_documents").strip()
         document_type = (node_component.get("documentType") or "digital").strip()
-        is_contract = _as_bool(node_component.get("isContract", False), default=False)
+        is_contract = _as_mcp_bool_string(node_component.get("isContract", False), default=False)
 
         if index_mode == "index_enriched_data":
             cleaned_fields_path = os.path.join(process_instance_dir, "cleaned_extracted_fields.json")
@@ -353,7 +375,7 @@ def run_document_index(**context):
 
             tool_name = "index_enriched_data"
             tool_args = {
-                "collection_id": collection_id,
+                "process_id": process_id,
                 "enriched_text": enriched_text,
             }
         else:
@@ -365,47 +387,61 @@ def run_document_index(**context):
             if not pdf_files:
                 raise FileNotFoundError("No PDF files found for Document Index node")
 
-            tool_name = "process_documents"
+            tool_name = "upload_documents"
             tool_args = {
-                "file_paths": pdf_files,
-                "collection_id": collection_id,
-                "document_type": document_type,
+                "files": pdf_files,
+                "process_id": process_id,
+                "doc_type": document_type,
                 "is_contract": is_contract,
             }
 
         log_to_mongo(
             process_instance_id,
             "Document Index",
-            f"Calling MCP tool '{tool_name}' with collection_id={collection_id} and mcp_session_id={mcp_session_id}",
+            f"Calling MCP tool '{tool_name}' with process_id={process_id}, collection_id={collection_id} and mcp_session_id={mcp_session_id}",
             log_type=0,
         )
-        if tool_name == "process_documents":
-            try:
-                mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
-                _raise_if_mcp_tool_error(mcp_response)
-            except Exception as process_exc:
-                process_error = str(process_exc)
-                if not _should_retry_with_upload(process_error):
-                    raise
+        if tool_name == "upload_documents":
+            mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
+            _raise_if_mcp_tool_error(mcp_response)
 
-                fallback_tool_name = "upload_documents"
-                fallback_args = {
-                    "files": tool_args["file_paths"],
-                    "collection_id": collection_id,
+            tasks = _extract_tasks(mcp_response)
+            if not tasks:
+                raise RuntimeError("upload_documents succeeded but returned no tasks")
+
+            upload_tasks = tasks
+            mcp_context["upload_tasks"] = upload_tasks
+
+            process_document_ids = []
+            for task in upload_tasks:
+                doc_index_id = str(task.get("doc_index_id", "")).strip()
+                if not doc_index_id:
+                    raise RuntimeError("upload_documents task missing doc_index_id")
+
+                process_args = {
+                    "files": pdf_files,
+                    "process_id": process_id,
+                    "doc_index_id": doc_index_id,
                     "document_type": document_type,
                     "is_contract": is_contract,
                 }
                 log_to_mongo(
                     process_instance_id,
                     "Document Index",
-                    "process_documents failed, retrying with upload_documents fallback",
+                    f"Calling MCP tool 'process_documents' for doc_index_id={doc_index_id}",
                     log_type=0,
-                    remark=process_error[:2000],
                 )
-                mcp_response = _invoke_mcp_tool(fallback_tool_name, fallback_args, mcp_session_id)
-                _raise_if_mcp_tool_error(mcp_response)
-                tool_name = fallback_tool_name
-                tool_args = fallback_args
+                process_response = _invoke_mcp_tool("process_documents", process_args, mcp_session_id)
+                _raise_if_mcp_tool_error(process_response)
+                process_ids = _extract_document_ids(process_response)
+                for process_doc_id in process_ids:
+                    if process_doc_id not in process_document_ids:
+                        process_document_ids.append(process_doc_id)
+
+            if process_document_ids:
+                result = mcp_response.setdefault("result", {})
+                if isinstance(result, dict):
+                    result["document_ids"] = process_document_ids
         else:
             mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
             _raise_if_mcp_tool_error(mcp_response)
