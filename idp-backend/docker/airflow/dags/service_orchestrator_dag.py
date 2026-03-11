@@ -49,6 +49,7 @@ NODE_TO_DAG_MAP = {
     "Document Index": "document_index_dag",
     "Document Query": "document_query_dag",
     "Integration": "integration_dag",
+    "Image Processing": "image_processing_dag"
 }
 
 EXECUTABLE_TYPES = {
@@ -61,6 +62,7 @@ EXECUTABLE_TYPES = {
     "documentIndex",
     "documentQuery",
     "integration",
+    "imageProcessing"
 }
 
 DEFAULT_ARGS = {
