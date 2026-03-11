@@ -81,6 +81,17 @@ import requests
 TRANSACTION_API_URL = "https://api.docognize.ai/process-instance-transactions"
 LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
 
+def _get_transaction_id(process_instance_id):
+    tid_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}", "tid.json")
+    if not os.path.exists(tid_path):
+        return TRANSACTION_ID or None
+    try:
+        with open(tid_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("transactionId") or TRANSACTION_ID or None
+    except Exception as exc:
+        print(f"Warning: failed to read transaction id from {tid_path}: {exc}")
+        return TRANSACTION_ID or None
+
 def create_process_instance_transaction(current_stage: str, **context):
 
     global TRANSACTION_ID
@@ -232,6 +243,7 @@ def trigger_child_dag(dag_id, process_instance_id, parent_node_name):
 def log_to_mongo(process_instance_id, node_name, message, log_type=1, remark=""):
     mongo_collection.insert_one({
         "processInstanceId": process_instance_id,
+        "processInstanceTransactionId": _get_transaction_id(process_instance_id),
         "nodeName": node_name,
         "logsDescription": message,
         "logType": log_type,

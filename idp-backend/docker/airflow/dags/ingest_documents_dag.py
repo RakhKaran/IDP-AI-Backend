@@ -38,6 +38,17 @@ MONGO_COLLECTION = "LogEntry"
 mongo_client = MongoClient(MONGO_URI)
 mongo_collection = mongo_client[MONGO_DB_NAME][MONGO_COLLECTION]
 
+def _get_transaction_id(process_instance_id):
+    tid_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}", "tid.json")
+    if not os.path.exists(tid_path):
+        return None
+    try:
+        with open(tid_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("transactionId")
+    except Exception as exc:
+        print(f"Warning: failed to read transaction id from {tid_path}: {exc}")
+        return None
+
 def fix_base64_padding(s: str) -> str:
     return s + '=' * (-len(s) % 4)
 
@@ -67,6 +78,7 @@ def log_to_mongo(process_instance_id, node_name, message, log_type=1, remark="")
     try:
         log_entry = {
             "processInstanceId": process_instance_id,
+            "processInstanceTransactionId": _get_transaction_id(process_instance_id),
             "nodeName": node_name,
             "logsDescription": message,
             "logType": log_type,  # 0=info, 1=error, 2=success, 3=warning
