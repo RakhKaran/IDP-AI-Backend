@@ -4,6 +4,7 @@ from airflow.providers.mysql.hooks.mysql import MySqlHook
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pymongo import MongoClient
+import base64
 import json
 import os
 import requests
@@ -391,7 +392,8 @@ def _build_process_document_files(file_paths):
     files = []
     for file_path in file_paths:
         with open(file_path, "rb") as file_handle:
-            files.append(file_handle.read())
+            encoded = base64.b64encode(file_handle.read()).decode("ascii")
+            files.append(encoded)
     return files
 
 
