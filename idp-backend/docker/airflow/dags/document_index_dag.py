@@ -351,6 +351,7 @@ def _wait_for_document_processing(upload_tasks, mcp_session_id):
         remaining_tasks = []
         for task in pending_tasks:
             status_response = _invoke_mcp_tool("check_document_status", {"task": task}, mcp_session_id)
+            print('status response : ', status_response)
             _raise_if_mcp_tool_error(status_response)
             result = status_response.get("result", {}) if isinstance(status_response, dict) else {}
             if not isinstance(result, dict):
