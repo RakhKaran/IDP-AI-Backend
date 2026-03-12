@@ -390,10 +390,12 @@ def _wait_for_document_processing(upload_tasks, mcp_session_id):
 
 def _build_process_document_files(file_paths):
     files = []
+
     for file_path in file_paths:
-        with open(file_path, "rb") as file_handle:
-            encoded = base64.b64encode(file_handle.read()).decode("ascii")
-            files.append(encoded)
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+        files.append(base64.b64encode(file_bytes).decode("ascii"))
+
     return files
 
 
