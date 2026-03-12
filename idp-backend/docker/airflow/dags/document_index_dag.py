@@ -233,6 +233,8 @@ def _invoke_mcp_tool(tool_name, arguments, mcp_session_id):
 
     last_error = None
     for payload in payload_variants:
+        print("tool_name : ", tool_name)
+        print("arguments : ", arguments)
         print("payload on invoke mcp : ", payload)
         try:
             response = requests.post(
@@ -354,12 +356,14 @@ def _wait_for_document_processing(upload_tasks, mcp_session_id):
             print('status response : ', status_response)
             _raise_if_mcp_tool_error(status_response)
             result = status_response.get("result", {}) if isinstance(status_response, dict) else {}
+            structured_content = result.get("structuredContent", {}) if isinstance(result, dict) else {}
+            print('structured content : ', structured_content)
             if not isinstance(result, dict):
                 remaining_tasks.append(task)
                 continue
 
-            status = str(result.get("status", "")).strip().lower()
-            completion_status = str(result.get("completion_status", "")).strip().lower()
+            status = str(structured_content.get("status", "")).strip().lower()
+            completion_status = str(structured_content.get("completion_status", "")).strip().lower()
             doc_index_id = str(task.get("doc_index_id", "")).strip()
 
             if status == "failed":
