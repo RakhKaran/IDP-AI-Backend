@@ -167,18 +167,18 @@ def process_documents_with_ocr(**context):
         # Find image_processing node in blueprint
         image_processing_node = next(
             (node for node in blueprint
-             if isinstance(node, dict) and node.get("nodeName", "").lower() == "image_processing"),
+             if isinstance(node, dict) and node.get("nodeName", "").lower() == "image processing"),
             None
         )
         
         if not image_processing_node:
-            raise ValueError("No image_processing node found in blueprint")
             log_to_mongo(
                 process_instance_id,
                 "ImageProcessing",
-                "No image_processing node found in blueprint",
+                "No image processing node found in blueprint",
                 log_type=1
             )
+            raise ValueError("No image processing node found in blueprint")
         
         # Get configuration from blueprint
         component = image_processing_node.get("component", {})
