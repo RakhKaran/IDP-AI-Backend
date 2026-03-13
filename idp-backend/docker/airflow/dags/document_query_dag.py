@@ -222,6 +222,44 @@ def _extract_document_ids_from_context(mcp_context):
     return [item for item in ids if isinstance(item, str)]
 
 
+def _extract_mcp_tool_error(mcp_response):
+    if not isinstance(mcp_response, dict):
+        return ""
+
+    result = mcp_response.get("result")
+    if not isinstance(result, dict):
+        return ""
+    if not result.get("isError"):
+        return ""
+
+    content = result.get("content", [])
+    error_lines = []
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                error_lines.append(text.strip())
+
+    if error_lines:
+        return "\n".join(error_lines)
+    return "MCP tool returned isError=true"
+
+
+def _raise_if_mcp_tool_error(mcp_response):
+    error_text = _extract_mcp_tool_error(mcp_response)
+    if error_text:
+        raise RuntimeError(error_text)
+
+
+def _get_or_create_session_id(mcp_context, process_instance_id):
+    existing_session_id = str(mcp_context.get("session_id", "")).strip()
+    if existing_session_id:
+        return existing_session_id
+    return f"process-instance-{process_instance_id}"
+
+
 def run_document_query(**context):
     process_instance_id = context["dag_run"].conf.get("id")
     if not process_instance_id:
@@ -235,9 +273,11 @@ def run_document_query(**context):
     mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
     mcp_context = _read_json(mcp_context_path, {})
 
-    collection_id = mcp_context.get("collection_id")
-    if not collection_id:
-        raise ValueError("collection_id not found. Run Document Index node before Document Query")
+    process_id = str(mcp_context.get("process_id") or "").strip()
+    if not process_id:
+        raise ValueError("process_id not found. Run Document Index node before Document Query")
+    session_id = _get_or_create_session_id(mcp_context, process_instance_id)
+    mcp_context["session_id"] = session_id
     mcp_session_id, initialize_response = _initialize_mcp_session()
     mcp_context["mcp_session_id"] = mcp_session_id
     mcp_context["mcp_initialize_response"] = initialize_response
@@ -270,37 +310,83 @@ def run_document_query(**context):
         top_k = int(node_component.get("topK", 5) or 5)
         use_graph = _as_bool(node_component.get("useGraph", True), default=True)
         document_ids = _extract_document_ids_from_context(mcp_context)
+        user_id = str(mcp_context.get("user_id") or "default").strip() or "default"
 
-        tool_args = {"query": query_text}
+        tool_args = {}
 
         if query_mode == "query_collection":
-            tool_args["collection_id"] = collection_id
+            tool_args = {
+                "request": {
+                    "query": query_text,
+                    "process_id": process_id,
+                    "doc_index_id": None,
+                    "return_answer": True,
+                    "use_graph": use_graph,
+                    "user_id": user_id,
+                },
+                "session_id": session_id,
+            }
         elif query_mode in {
             "query_documents",
             "query_documents_hybrid",
             "query_documents_graph",
-            "query_documents_by_toc",
         }:
             if not document_ids:
                 raise ValueError(
                     f"Query mode '{query_mode}' requires document_ids, but none are available in context"
                 )
-            tool_args["document_ids"] = document_ids
+            tool_args = {
+                "query": query_text,
+                "doc_ids": document_ids,
+                "session_id": session_id,
+                "user_id": user_id,
+            }
             if query_mode in {"query_documents", "query_documents_hybrid"}:
                 tool_args["use_graph"] = use_graph
+        elif query_mode == "query_documents_by_toc":
+            if not document_ids:
+                raise ValueError("query_documents_by_toc requires document_ids, but none are available in context")
+            tool_args = {
+                "toc_request": {
+                    "toc_sections": [
+                        {"document_id": document_id, "section_title": query_text}
+                        for document_id in document_ids
+                    ]
+                }
+            }
         elif query_mode == "query_enriched_index":
-            tool_args["collection_id"] = collection_id
-            tool_args["top_k"] = top_k
+            tool_args = {
+                "process_id": process_id,
+                "query": query_text,
+                "top_k": top_k,
+            }
+        elif query_mode == "query_metadata":
+            tool_args = {
+                "request": {
+                    "query": query_text,
+                    "process_id": process_id,
+                    "doc_index_id": None,
+                    "return_answer": True,
+                    "use_graph": use_graph,
+                    "user_id": user_id,
+                },
+                "session_id": session_id,
+            }
         else:
             raise ValueError(f"Unsupported query mode '{query_mode}'")
 
+        print("tool_name : ", query_mode)
+        print("arguments : ", tool_args)
         log_to_mongo(
             process_instance_id,
             "Document Query",
-            f"Calling MCP tool '{query_mode}' with collection_id={collection_id} and mcp_session_id={mcp_session_id}",
+            f"Calling MCP tool '{query_mode}' with process_id={process_id}, session_id={session_id} and mcp_session_id={mcp_session_id}",
             log_type=0,
+            remark=json.dumps(tool_args)[:2000],
         )
         mcp_response = _invoke_mcp_tool(query_mode, tool_args, mcp_session_id)
+        print("query response : ", mcp_response)
+        _raise_if_mcp_tool_error(mcp_response)
 
         response_path = os.path.join(process_instance_dir, "mcp_document_query_response.json")
         _write_json(response_path, mcp_response)
@@ -314,6 +400,7 @@ def run_document_query(**context):
             "Document Query",
             f"MCP query completed successfully via '{query_mode}'",
             log_type=2,
+            remark=json.dumps(mcp_response)[:2000],
         )
     except Exception as exc:
         conn.rollback()
