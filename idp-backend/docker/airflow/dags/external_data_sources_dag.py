@@ -64,6 +64,19 @@ def _write_json(path, payload):
         json.dump(payload, f, indent=2)
 
 
+def _write_external_response(process_instance_dir, source_type, payload):
+    response_path = os.path.join(process_instance_dir, f"external_data_sources_{source_type}_response.json")
+    _write_json(response_path, payload)
+
+    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+    mcp_context = _read_json(mcp_context_path, {})
+    mcp_context["external_data_sources_response_path"] = response_path
+    mcp_context["external_data_sources_type"] = source_type
+    _write_json(mcp_context_path, mcp_context)
+
+    return response_path
+
+
 def _fetch_blueprint(process_instance_id, process_instance_dir, cursor):
     blueprint_path = os.path.join(process_instance_dir, "blueprint.json")
     if os.path.exists(blueprint_path):
@@ -233,13 +246,10 @@ def _run_api_connector(component, process_instance_id, process_instance_dir):
     except Exception:
         response_payload["body"] = response.text
 
-    response_path = os.path.join(process_instance_dir, "external_data_sources_api_response.json")
-    _write_json(response_path, response_payload)
+    _write_external_response(process_instance_dir, "api", response_payload)
 
     mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
     mcp_context = _read_json(mcp_context_path, {})
-    mcp_context["external_data_sources_response_path"] = response_path
-    mcp_context["external_data_sources_type"] = "api"
     mcp_context["external_data_sources_status_code"] = response.status_code
     _write_json(mcp_context_path, mcp_context)
 
@@ -346,14 +356,7 @@ def _run_website_connector(component, process_instance_id, process_instance_dir)
         "pages": crawled_pages,
     }
 
-    response_path = os.path.join(process_instance_dir, "external_data_sources_website_response.json")
-    _write_json(response_path, result_payload)
-
-    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
-    mcp_context = _read_json(mcp_context_path, {})
-    mcp_context["external_data_sources_response_path"] = response_path
-    mcp_context["external_data_sources_type"] = "website"
-    _write_json(mcp_context_path, mcp_context)
+    _write_external_response(process_instance_dir, "website", result_payload)
 
     log_to_mongo(
         process_instance_id,
@@ -363,17 +366,94 @@ def _run_website_connector(component, process_instance_id, process_instance_dir)
     )
 
 
-def _run_db_connector_placeholder(component, process_instance_id):
-    db_type = component.get("dbType") or "unknown"
+def _run_postgres_connector(component, process_instance_id, process_instance_dir):
+    sql = str(component.get("dbQuery", "")).strip()
+    connection_ref = str(component.get("dbConnectionRef", "")).strip()
+    connector_name = str(component.get("dbConnectorName", "")).strip()
+
+    if not sql:
+        raise ValueError("PostgreSQL query is required")
+
+    first_keyword = sql.split(None, 1)[0].lower() if sql.split() else ""
+    if first_keyword not in {"select", "with", "show", "explain"}:
+        raise ValueError("Only read-only PostgreSQL queries are allowed")
+
     log_to_mongo(
         process_instance_id,
         "External Data Sources",
-        f"DB connector selected ({db_type}). MCP mapping placeholder reached.",
+        f"Calling PostgreSQL MCP tool for connector '{connector_name or 'postgres'}' and ref '{connection_ref or 'default'}'",
+        log_type=0,
+    )
+
+    response_payload = _post_mcp(
+        "/call_tool",
+        {
+            "tool_name": "Postgres.execute_query",
+            "parameters": {
+                "sql": sql,
+            },
+        },
+    )
+
+    result_payload = {
+        "sourceType": "db",
+        "dbType": "postgresql",
+        "connectorName": connector_name,
+        "connectionRef": connection_ref,
+        "toolName": "Postgres.execute_query",
+        "query": sql,
+        "response": response_payload,
+    }
+
+    _write_external_response(process_instance_dir, "postgresql", result_payload)
+
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        "PostgreSQL MCP query executed successfully",
+        log_type=2,
+    )
+
+
+def _run_db_connector(component, process_instance_id, process_instance_dir):
+    db_type = str(component.get("dbType") or "unknown").strip().lower()
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        f"DB connector selected ({db_type}).",
         log_type=3,
         remark="TODO: implement MCP DB connector mapping and invocation",
     )
-    raise NotImplementedError("DB connector execution is pending MCP integration.")
 
+    if db_type in {"mysql", "mongodb", "sqlserver"}:
+        log_to_mongo(
+            process_instance_id,
+            "External Data Sources",
+            f"(Database selected: {db_type}).",
+            log_type=3,
+            remark="TODO: implement MCP DB connector mapping and invocation",
+        )
+        raise RuntimeError(f"Integration pending for selected database: {db_type}")
+
+    if db_type == "postgresql":
+        log_to_mongo(
+            process_instance_id,
+            "External Data Sources",
+            "PostgreSQL MCP connector selected.",
+            log_type=0,
+        )
+        _run_postgres_connector(component, process_instance_id, process_instance_dir)
+        return
+
+    log_to_mongo(
+        process_instance_id,
+        "External Data Sources",
+        f"(Invalid database selected: {db_type}).",
+        log_type=1,
+        remark="TODO: implement MCP DB connector mapping and invocation",
+    )
+    raise RuntimeError(f"Invalid database selected: {db_type}")
+    
 
 def _mcp_headers():
     headers = {"Content-Type": "application/json"}
@@ -724,7 +804,7 @@ def run_external_data_sources(**context):
         elif source_type == "website":
             _run_website_connector(component, process_instance_id, process_instance_dir)
         elif source_type == "db":
-            _run_db_connector_placeholder(component, process_instance_id)
+            _run_db_connector(component, process_instance_id, process_instance_dir)
         elif source_type == "bigdata":
             _run_bigdata_connector(component, process_instance_id, process_instance_dir)
         else:
