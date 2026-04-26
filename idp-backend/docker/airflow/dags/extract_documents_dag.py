@@ -20,7 +20,6 @@ from contextlib import contextmanager
 from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 import ast
-import easyocr
 
 log = LoggingMixin().log
 
@@ -54,7 +53,7 @@ mongo_client = MongoClient(MONGO_URI)
 mongo_collection = mongo_client[MONGO_DB_NAME][MONGO_COLLECTION]
 openai_client = OpenAI()
 openai_client = track_openai(openai_client, project_name="my-idp-project")
-easyocr_reader = easyocr.Reader(["en"], gpu=False)
+rapidocr_engine = None
 
 
 def _get_transaction_id(process_instance_id):
@@ -136,32 +135,22 @@ def preprocess_image(image):
     gray = cv2.equalizeHist(gray)
     blur = cv2.medianBlur(gray, 3)
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    coords = np.column_stack(np.where(thresh > 0))
-    if coords.size:
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
-
-        (h, w) = thresh.shape[:2]
-        center = (w // 2, h // 2)
-        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        thresh = cv2.warpAffine(
-            thresh,
-            matrix,
-            (w, h),
-            flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
-        )
-
     return thresh
 
 
-def easyocr_extract(image):
-    result = easyocr_reader.readtext(np.array(image), detail=0)
-    return " ".join(result)
+def rapidocr_extract(image):
+    global rapidocr_engine
+
+    if rapidocr_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        rapidocr_engine = RapidOCR()
+
+    result, _ = rapidocr_engine(np.array(image))
+    if not result:
+        return ""
+
+    return " ".join(item[1] for item in result if len(item) > 1 and item[1])
 
 
 def perform_ocr_on_image(image):
@@ -172,13 +161,13 @@ def perform_ocr_on_image(image):
     )
 
     if len(preprocess_text(tesseract_text)) >= 50:
-        return tesseract_text, "tesseract"
+        return tesseract_text
 
-    easyocr_text = easyocr_extract(processed_image)
-    if len(preprocess_text(easyocr_text)) > len(preprocess_text(tesseract_text)):
-        return easyocr_text, "easyocr"
+    rapidocr_text = rapidocr_extract(processed_image)
+    if len(preprocess_text(rapidocr_text)) > len(preprocess_text(tesseract_text)):
+        return rapidocr_text
 
-    return tesseract_text, "tesseract"
+    return tesseract_text
 
 
 def normalize_extracted_value(value):
@@ -201,7 +190,17 @@ def normalize_extracted_payload(payload):
 
 
 def page_contains_relevant_keywords(page_text, field_prompts, doc_type):
-    return len(page_text.strip()) >= 30
+    keywords = {"agreement", "contract", "amount", "date", "ref"}
+    keywords.add((doc_type or "").lower())
+
+    for field in field_prompts:
+        for key in [field.get("variableName", ""), field.get("field_to_extract", "")]:
+            for token in re.split(r"[^a-zA-Z0-9]+", key.lower()):
+                if len(token) > 2:
+                    keywords.add(token)
+
+    page_text_lower = page_text.lower()
+    return any(keyword and keyword in page_text_lower for keyword in keywords)
 
 
 def is_table_like_page(page_text):
@@ -253,9 +252,6 @@ def build_multi_field_prompt(doc_type, field_prompts, page_text):
     return f"""
 This is a Work Order / Contract document for document type "{doc_type}".
 Extract relevant structured fields carefully.
-The text below is extracted using OCR and may contain spelling errors, broken words, or incorrect characters.
-Carefully interpret the meaning and extract correct values even if the text is distorted.
-Do not rely only on exact keyword matching. Use context and reasoning.
 
 Extract the following fields from the document text.
 
@@ -272,36 +268,6 @@ Rules:
 Text:
 {page_text[:4000]}
 """
-
-
-def regex_extract_fields(field_prompts, text):
-    regex_hits = {}
-    lowered_text = text.lower()
-
-    for field in field_prompts:
-        field_name = field.get("variableName", "")
-        field_label = field.get("field_to_extract", "")
-        combined_name = f"{field_name} {field_label}".lower()
-
-        if "reference" in combined_name or "ref" in combined_name:
-            ref_match = re.search(r"\b[A-Z0-9][A-Z0-9/\-]{7,}\b", text)
-            if ref_match:
-                regex_hits[field_name] = ref_match.group(0)
-                continue
-
-        if "percent" in combined_name or "%" in combined_name or "rate" in combined_name:
-            percent_match = re.search(r"\b\d{1,2}(?:\.\d+)?\s*%", text)
-            if percent_match:
-                regex_hits[field_name] = percent_match.group(0)
-                continue
-
-        if "day" in combined_name or "duration" in combined_name or "period" in combined_name:
-            days_match = re.search(r"\b\d+\s*days\b", lowered_text)
-            if days_match:
-                regex_hits[field_name] = days_match.group(0)
-                continue
-
-    return normalize_extracted_payload(regex_hits)
 
 
 def extract_all_fields_from_page(doc_type, field_prompts, page_text):
@@ -419,14 +385,7 @@ def extract_text_from_pdf(pdf_path):
         for i in range(1, total_pages + 1):
             images = convert_from_path(pdf_path, first_page=i, last_page=i)
             if images:
-                page_text, ocr_method = perform_ocr_on_image(images[0])
-                texts.append(
-                    {
-                        "page_num": i,
-                        "text": page_text,
-                        "ocr_method": ocr_method,
-                    }
-                )
+                texts.append(perform_ocr_on_image(images[0]))
         return texts
     except Exception as e:
         print(f"OCR failed for {pdf_path}: {e}")
@@ -544,67 +503,14 @@ def extract_fields_from_documents(**context):
                 page_texts = extract_text_from_pdf(doc_path)
                 remaining_fields = {field["variableName"] for field in field_prompts}
 
-                combined_text = "\n".join(page["text"] for page in page_texts[:3] if page.get("text"))
-                if combined_text.strip():
-                    regex_hits = regex_extract_fields(field_prompts, combined_text)
-                    if regex_hits:
-                        log_to_mongo(
-                            process_instance_id,
-                            message=f"Regex hits on combined text for {file_name}: {list(regex_hits.keys())}",
-                            node_name="Extraction",
-                            log_type=0,
-                        )
-                    for field_name, value in regex_hits.items():
-                        if extracted.get(field_name) == "N/A":
-                            extracted[field_name] = value
-                            remaining_fields.discard(field_name)
-
-                if remaining_fields and combined_text.strip():
-                    try:
-                        current_fields = [field for field in field_prompts if field["variableName"] in remaining_fields]
-                        total_api_calls += 1
-                        extracted_payload = extract_all_fields_from_page(doc_type, current_fields, combined_text)
-                        extracted_payload = normalize_extracted_payload(extracted_payload)
-
-                        for field in current_fields:
-                            field_name = field["variableName"]
-                            if extracted.get(field_name) != "N/A":
-                                continue
-                            value = extracted_payload.get(field_name, "N/A") if isinstance(extracted_payload, dict) else "N/A"
-                            if isinstance(value, str) and value.upper() == "N/A":
-                                continue
-                            if value in [None, "", [], {}]:
-                                continue
-                            extracted[field_name] = value
-                            remaining_fields.discard(field_name)
-
-                        log_to_mongo(
-                            process_instance_id,
-                            message=f"Combined-text extraction API call #{total_api_calls} completed for {file_name}; remaining_fields={sorted(remaining_fields)}",
-                            node_name="Extraction",
-                            log_type=0,
-                        )
-                    except Exception as e:
-                        print(f"Error extracting combined text fields from {file_name}: {e}")
-                        log_to_mongo(
-                            process_instance_id,
-                            message=f"Error extracting combined text fields from {file_name}: {e}",
-                            node_name="Extraction",
-                            log_type=1,
-                        )
-
-                for page_data in page_texts:
-                    page_num = page_data["page_num"]
-                    page_text = page_data["text"]
-                    ocr_method = page_data["ocr_method"]
-
+                for page_num, page_text in enumerate(page_texts, start=1):
                     if page_num > MAX_PAGES_TO_SCAN or not remaining_fields:
                         break
 
                     print(f"OCR text length for {file_name} page {page_num}: {len(page_text)}")
                     log_to_mongo(
                         process_instance_id,
-                        message=f"OCR text length for {file_name} page {page_num}: {len(page_text)} using {ocr_method}",
+                        message=f"OCR text length for {file_name} page {page_num}: {len(page_text)}",
                         node_name="Extraction",
                         log_type=0,
                     )
@@ -635,23 +541,6 @@ def extract_fields_from_documents(**context):
                     if not current_fields:
                         break
 
-                    regex_hits = regex_extract_fields(current_fields, page_text)
-                    if regex_hits:
-                        log_to_mongo(
-                            process_instance_id,
-                            message=f"Regex hits for {file_name} page {page_num}: {list(regex_hits.keys())}",
-                            node_name="Extraction",
-                            log_type=0,
-                        )
-                    for field_name, value in regex_hits.items():
-                        if extracted.get(field_name) == "N/A":
-                            extracted[field_name] = value
-                            remaining_fields.discard(field_name)
-
-                    current_fields = [field for field in field_prompts if field["variableName"] in remaining_fields]
-                    if not current_fields:
-                        break
-
                     try:
                         total_api_calls += 1
                         extracted_payload = extract_all_fields_from_page(doc_type, current_fields, page_text)
@@ -659,8 +548,6 @@ def extract_fields_from_documents(**context):
 
                         for field in current_fields:
                             field_name = field["variableName"]
-                            if extracted.get(field_name) != "N/A":
-                                continue
                             value = extracted_payload.get(field_name, "N/A") if isinstance(extracted_payload, dict) else "N/A"
                             if isinstance(value, str) and value.upper() == "N/A":
                                 continue
@@ -671,7 +558,7 @@ def extract_fields_from_documents(**context):
 
                         log_to_mongo(
                             process_instance_id,
-                            message=f"GenAI extraction API call #{total_api_calls} completed for {file_name} page {page_num}; remaining_fields={sorted(remaining_fields)}",
+                            message=f"GenAI extraction API call #{total_api_calls} completed for {file_name} page {page_num}",
                             node_name="Extraction",
                             log_type=0,
                         )
