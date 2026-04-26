@@ -8,6 +8,7 @@ import json
 import os
 import requests
 from urllib.parse import urlencode
+from transaction_status import sync_stage_status
 
 load_dotenv()
 
@@ -162,14 +163,7 @@ def run_integration(**context):
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            UPDATE ProcessInstances
-            SET currentStage = %s, isInstanceRunning = 1, updatedAt = NOW()
-            WHERE id = %s
-            """,
-            ("Integration", process_instance_id),
-        )
+        transaction_id = sync_stage_status(cursor, process_instance_id, "Integration", 1)
         conn.commit()
 
         blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)

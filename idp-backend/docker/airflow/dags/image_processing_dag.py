@@ -15,6 +15,7 @@ from pymongo import MongoClient
 from pdf2image import convert_from_path
 from openai import OpenAI
 from opik.integrations.openai import track_openai
+from transaction_status import sync_stage_status
 
 # Import OCR services
 from ocr_services.ocr_service_factory import get_ocr_service
@@ -147,14 +148,7 @@ def process_documents_with_ocr(**context):
         with open(blueprint_path, "r") as f:
             blueprint = json.load(f)
         
-        # Update ProcessInstances table
-        cursor.execute("""
-            UPDATE ProcessInstances
-            SET currentStage = %s,
-                isInstanceRunning = %s,
-                updatedAt = NOW()
-            WHERE id = %s
-        """, ("ImageProcessing", 1, process_instance_id))
+        transaction_id = sync_stage_status(cursor, process_instance_id, "ImageProcessing", 1)
         conn.commit()
         print(f"✅ Updated ProcessInstances to 'ImageProcessing' stage")
         log_to_mongo(

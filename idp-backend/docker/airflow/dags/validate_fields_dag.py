@@ -11,6 +11,7 @@ import json
 import re
 import requests
 from dotenv import load_dotenv
+from transaction_status import sync_stage_status
 
 load_dotenv() 
 
@@ -70,13 +71,7 @@ def validate_extracted_fields(**context):
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE ProcessInstances
-        SET currentStage = %s,
-            isInstanceRunning = %s,
-            updatedAt = NOW()
-        WHERE id = %s
-    """, ("Validation", 1, process_instance_id))
+    transaction_id = sync_stage_status(cursor, process_instance_id, "Validation", 1)
     conn.commit()
     print(f"🟢 Updated ProcessInstances to 'Validation' stage for process_instance_id={process_instance_id}")
 

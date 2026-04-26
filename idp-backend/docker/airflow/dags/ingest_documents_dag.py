@@ -12,6 +12,7 @@ from cryptography.hazmat.backends import default_backend
 import base64
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from transaction_status import sync_stage_status
 
 load_dotenv() 
 
@@ -179,16 +180,10 @@ def fetch_blueprint_and_download_docs(**context):
         print(f"✅ Blueprint saved to {BLUEPRINT_JSON_PATH}")
 
         # 4. Update ProcessInstances table
-        cursor.execute("""
-        UPDATE ProcessInstances
-        SET currentStage = %s,
-            isInstanceRunning = %s,
-            updatedAt = NOW()
-        WHERE id = %s
-        """, ("Ingestion", 1, process_instance_id))
+        transaction_id = sync_stage_status(cursor, process_instance_id, "Ingestion", 1)
         conn.commit()
         print(f"✅ Updated ProcessInstance {process_instance_id} to Ingestion stage")
-        log_to_mongo(process_instance_id, "Ingestion", "ProcessInstance stage updated to 'Ingestion'", log_type=2)
+        log_to_mongo(process_instance_id, "Ingestion", f"Stage synced to 'Ingestion' with transaction_id={transaction_id}", log_type=2)
 
 
         # 5. Find ingestion node configuration

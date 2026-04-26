@@ -8,6 +8,7 @@ import json
 import os
 import requests
 import time
+from transaction_status import sync_stage_status
 
 load_dotenv()
 
@@ -404,14 +405,7 @@ def run_document_index(**context):
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            """
-            UPDATE ProcessInstances
-            SET currentStage = %s, isInstanceRunning = 1, updatedAt = NOW()
-            WHERE id = %s
-            """,
-            ("Document Index", process_instance_id),
-        )
+        transaction_id = sync_stage_status(cursor, process_instance_id, "Document Index", 1)
         conn.commit()
 
         blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)

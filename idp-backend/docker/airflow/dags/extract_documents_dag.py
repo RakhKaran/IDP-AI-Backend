@@ -18,6 +18,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import signal
 from contextlib import contextmanager
 from sentence_transformers import SentenceTransformer
+from transaction_status import sync_stage_status
 log = LoggingMixin().log
 
 from dotenv import load_dotenv
@@ -287,12 +288,7 @@ def extract_fields_from_documents(**context):
     with open(CLASSIFIED_JSON_PATH, "r") as f:
         classified_docs = json.load(f)
 
-    # Update current stage
-    cursor.execute("""
-        UPDATE ProcessInstances
-        SET currentStage = %s, isInstanceRunning = %s, updatedAt = NOW()
-        WHERE id = %s
-    """, ("Extraction", 1, process_instance_id))
+    transaction_id = sync_stage_status(cursor, process_instance_id, "Extraction", 1)
     conn.commit()
 
 

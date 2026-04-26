@@ -13,6 +13,7 @@ import shutil
 import base64
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from transaction_status import sync_stage_status
 
 load_dotenv() 
 
@@ -105,13 +106,7 @@ def deliver_documents(**context):
     component = deliver_node.get("component", {})
     channel_type = component.get("channelType", "").lower()
 
-    cursor.execute("""
-        UPDATE ProcessInstances
-        SET currentStage = %s,
-            isInstanceRunning = 1,
-            updatedAt = NOW()
-        WHERE id = %s
-    """, ("Delivery", process_instance_id))
+    transaction_id = sync_stage_status(cursor, process_instance_id, "Delivery", 1)
     conn.commit()
 
     uploaded_count = 0
@@ -242,13 +237,7 @@ def deliver_documents(**context):
     print(f"✅ Updated {updated_count} ProcessInstanceDocuments records")
     log_to_mongo(process_instance_id, message = f"Updated {updated_count} ProcessInstanceDocuments records", node_name = "Deliver", log_type=2)
 
-    cursor.execute("""
-        UPDATE ProcessInstances
-        SET currentStage = %s,
-            isInstanceRunning = 0,
-            updatedAt = NOW()
-        WHERE id = %s
-    """, ("Completed", process_instance_id))
+    transaction_id = sync_stage_status(cursor, process_instance_id, "Completed", 0)
     conn.commit()
 
     shutil.rmtree(process_instance_dir_path)

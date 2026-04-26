@@ -18,6 +18,7 @@ import joblib
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
+from transaction_status import sync_stage_status
 
 load_dotenv() 
 
@@ -297,16 +298,7 @@ def classify_documents(**context):
         with open(blueprint_path, "r") as f:
             blueprint = json.load(f)
 
-        cursor.execute(
-            """
-            UPDATE ProcessInstances
-            SET currentStage = %s,
-                isInstanceRunning = %s,
-                updatedAt = NOW()
-            WHERE id = %s
-            """,
-            ("Classification", 1, process_instance_id)
-        )
+        transaction_id = sync_stage_status(cursor, process_instance_id, "Classification", 1)
         conn.commit()
         print(f"🟢 ProcessInstances updated → currentStage='Classification', isInstanceRunning=1 for process_instance_id={process_instance_id}")
         log_to_mongo(process_instance_id, message = f"ProcessInstances updated → currentStage='Classification', isInstanceRunning=1 for process_instance_id={process_instance_id}", node_name = "Classification", log_type=2)
