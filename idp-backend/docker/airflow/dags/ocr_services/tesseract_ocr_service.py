@@ -6,7 +6,6 @@ Handles text extraction using Tesseract OCR engine
 import pytesseract
 from pdf2image import convert_from_path
 from typing import Dict, Optional
-import os
 from .base_ocr_service import BaseOCRService
 
 
@@ -71,6 +70,30 @@ class TesseractOCRService(BaseOCRService):
             return 'eng'  # Default fallback
         except Exception:
             return 'eng'  # Default fallback
+
+    def _get_pdf_convert_kwargs(self, config: Optional[Dict] = None) -> Dict:
+        """
+        Build pdf2image keyword arguments from config.
+
+        Supported keys:
+            - first_page
+            - last_page
+            - dpi
+            - thread_count
+        """
+        config = config or {}
+        convert_kwargs = {}
+
+        if config.get('first_page') is not None:
+            convert_kwargs['first_page'] = config['first_page']
+        if config.get('last_page') is not None:
+            convert_kwargs['last_page'] = config['last_page']
+        if config.get('dpi') is not None:
+            convert_kwargs['dpi'] = config['dpi']
+        if config.get('thread_count') is not None:
+            convert_kwargs['thread_count'] = config['thread_count']
+
+        return convert_kwargs
     
     def extract_text(self, image_path: str, config: Optional[Dict] = None) -> str:
         """
@@ -101,7 +124,7 @@ class TesseractOCRService(BaseOCRService):
             
             # Handle PDF files
             if image_path.lower().endswith('.pdf'):
-                images = convert_from_path(image_path)
+                images = convert_from_path(image_path, **self._get_pdf_convert_kwargs(config))
                 text_parts = []
                 
                 for img in images:
@@ -156,7 +179,7 @@ class TesseractOCRService(BaseOCRService):
             
             # Handle PDF files
             if image_path.lower().endswith('.pdf'):
-                images = convert_from_path(image_path)
+                images = convert_from_path(image_path, **self._get_pdf_convert_kwargs(config))
                 all_text = []
                 all_confidences = []
                 
