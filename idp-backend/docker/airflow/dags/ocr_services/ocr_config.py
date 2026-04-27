@@ -18,7 +18,7 @@ class OCRConfig:
         self.environment = os.getenv("ENVIRONMENT", "development").lower()
         
         # Default OCR engine selection
-        self.default_engine = os.getenv("OCR_DEFAULT_ENGINE", "safe")
+        self.default_engine = os.getenv("OCR_DEFAULT_ENGINE", "paddle_first")
         
         # Performance settings
         self.max_workers = int(os.getenv("OCR_MAX_WORKERS", "4"))
@@ -28,19 +28,19 @@ class OCRConfig:
         # Engine-specific settings
         self.engine_configs = {
             "production": {
-                "primary_engine": "safe",  # Use safe service for production
+                "primary_engine": "paddle_first",  # PaddleOCR first for better accuracy
                 "fallback_engine": None,
-                "dpi": 150,  # Lower DPI for stability
-                "max_workers": 2,  # Conservative worker count
+                "dpi": 200,  # Higher DPI for better PaddleOCR performance
+                "max_workers": 1,  # Single worker for stability
                 "parallel_processing": False,  # Sequential for stability
                 "enable_performance_logging": True,
                 "cache_enabled": True,
                 "ai_cleanup_enabled": False,  # Disable for speed and stability
             },
             "development": {
-                "primary_engine": "safe", 
+                "primary_engine": "paddle_first", 
                 "fallback_engine": None,
-                "dpi": 150,  # Lower DPI for faster development
+                "dpi": 200,  # Good DPI for development testing
                 "max_workers": 1,  # Single worker for development
                 "parallel_processing": False,
                 "enable_performance_logging": True,
@@ -48,9 +48,9 @@ class OCRConfig:
                 "ai_cleanup_enabled": False,  # Keep simple for development
             },
             "testing": {
-                "primary_engine": "safe",
+                "primary_engine": "safe",  # Use safe service for testing
                 "fallback_engine": None,  # No fallback for faster tests
-                "dpi": 100,  # Minimal DPI for testing
+                "dpi": 150,  # Lower DPI for testing
                 "max_workers": 1,
                 "parallel_processing": False,
                 "enable_performance_logging": False,
@@ -88,26 +88,26 @@ class OCRConfig:
         
         component_configs = {
             "classification": {
-                "dpi": 150,  # Lower DPI for faster classification
+                "dpi": 200,  # Good DPI for PaddleOCR classification
                 "max_pages": 5,  # Only need first few pages for classification
                 "parallel_processing": False,  # Sequential for stability
                 "ai_cleanup_enabled": False,  # Speed over accuracy for classification
             },
             "extraction": {
-                "dpi": 200,  # Higher DPI for better field extraction accuracy
-                "max_pages": 10,  # Reasonable limit for extraction
+                "dpi": 250,  # Higher DPI for better field extraction accuracy
+                "max_pages": 15,  # More pages for thorough extraction
                 "parallel_processing": False,  # Sequential for stability
                 "ai_cleanup_enabled": False,  # Keep simple for now
             },
             "validation": {
-                "dpi": 150,
+                "dpi": 200,
                 "max_pages": 3,  # Usually validate specific pages
                 "parallel_processing": False,  # Sequential for validation
                 "ai_cleanup_enabled": False,
             },
             "full_processing": {
-                "dpi": 200,  # Balanced quality
-                "max_pages": 20,  # Reasonable limit
+                "dpi": 250,  # High quality for complete processing
+                "max_pages": 25,  # Process more pages
                 "parallel_processing": False,  # Sequential for stability
                 "ai_cleanup_enabled": False,
             }
@@ -127,11 +127,13 @@ class OCRConfig:
         """
         config = self.get_config(component)
         
-        # Use safe service by default
-        primary_engine = config.get("primary_engine", "safe")
+        # Use paddle_first service by default for better accuracy on poor quality docs
+        primary_engine = config.get("primary_engine", "paddle_first")
         
         # Map to actual engine names
-        if primary_engine == "safe":
+        if primary_engine == "paddle_first":
+            return "paddle_first"
+        elif primary_engine == "safe":
             return "safe"
         elif primary_engine == "tesseract":
             return "tesseract"
@@ -217,22 +219,29 @@ def get_performance_config(component: str = None) -> Dict[str, Any]:
 Environment Variables for OCR Configuration:
 
 ENVIRONMENT: Environment name (production, development, testing) - default: development
-OCR_DEFAULT_ENGINE: Default OCR engine (safe, tesseract, paddle) - default: safe
+OCR_DEFAULT_ENGINE: Default OCR engine (paddle_first, safe, tesseract) - default: paddle_first
 OCR_MAX_WORKERS: Maximum parallel workers - default: 4
-OCR_DEFAULT_DPI: Default image DPI - default: 150
+OCR_DEFAULT_DPI: Default image DPI - default: 200
 OCR_MAX_PAGES: Maximum pages per document - default: 20
 
-Example .env file for PRODUCTION (recommended):
+Example .env file for PRODUCTION (recommended for poor quality documents):
 ENVIRONMENT=production
-OCR_DEFAULT_ENGINE=safe
-OCR_MAX_WORKERS=2
-OCR_DEFAULT_DPI=150
-OCR_MAX_PAGES=20
+OCR_DEFAULT_ENGINE=paddle_first
+OCR_MAX_WORKERS=1
+OCR_DEFAULT_DPI=200
+OCR_MAX_PAGES=15
 
-Example .env file for DEVELOPMENT:
-ENVIRONMENT=development
+Example .env file for SAFE MODE (if PaddleOCR causes issues):
+ENVIRONMENT=production
 OCR_DEFAULT_ENGINE=safe
 OCR_MAX_WORKERS=1
 OCR_DEFAULT_DPI=150
+OCR_MAX_PAGES=10
+
+Example .env file for DEVELOPMENT:
+ENVIRONMENT=development
+OCR_DEFAULT_ENGINE=paddle_first
+OCR_MAX_WORKERS=1
+OCR_DEFAULT_DPI=200
 OCR_MAX_PAGES=10
 """

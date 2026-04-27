@@ -291,8 +291,8 @@ def ml_extract_text_from_pdf(pdf_path, max_pages=5, logger_callback=None):
     cache_payload = ensure_optimized_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="optimized",  # Use optimized service
-        config={"dpi": 200, "last_page": max_pages, "parallel": True},
+        ocr_engine="paddle_first",  # Use PaddleOCR first for better accuracy
+        config={"dpi": 200, "last_page": max_pages, "parallel": False},
         logger_callback=logger_callback,
     )
     cached_text = cache_payload.get("cleaned_text") or cache_payload.get("raw_text") or ""
@@ -421,8 +421,8 @@ def extract_text_from_pdf(pdf_path, logger_callback=None):
     cache_payload = ensure_optimized_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="optimized",  # Use optimized service
-        config={"dpi": 200, "last_page": MAX_PAGES_TO_SCAN, "parallel": True},
+        ocr_engine="paddle_first",  # Use PaddleOCR first for better accuracy
+        config={"dpi": 250, "last_page": MAX_PAGES_TO_SCAN, "parallel": False},
         logger_callback=logger_callback,
     )
     generated_page_texts = [page.get("cleaned_text") or page.get("text", "") for page in cache_payload.get("pages", [])]
