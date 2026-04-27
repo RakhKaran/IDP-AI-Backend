@@ -18,7 +18,7 @@ from transaction_status import sync_stage_status
 
 # Import OCR services
 from ocr_services.ocr_service_factory import get_ocr_service
-from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_ocr_output_dir
+from ocr_services.optimized_ocr_cache_utils import ensure_optimized_ocr_cache, get_ocr_output_dir
 from ai_services.text_cleanup_service import TextCleanupService
 
 load_dotenv()

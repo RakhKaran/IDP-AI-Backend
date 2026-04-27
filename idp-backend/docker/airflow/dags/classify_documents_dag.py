@@ -17,7 +17,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 from ocr_services.ocr_service_factory import get_ocr_service
-from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
+from ocr_services.optimized_ocr_cache_utils import ensure_optimized_ocr_cache, get_cached_document_text, get_cached_page_texts
+from ocr_services.ocr_config import get_ocr_engine_name, get_performance_config
 
 load_dotenv()
 
@@ -98,16 +99,25 @@ def _get_pdf_page_count(file_path: str) -> int:
 
 
 def _get_classification_ocr_config(component=None, **overrides):
-    component = component or {}
-    config = {
-        "language_mode": component.get("language_mode", "auto"),
-        "psm": component.get("psm", 3),
-        "oem": component.get("oem", 3),
-        "dpi": component.get("dpi", 300),
-        "thread_count": component.get("thread_count", 2),
-    }
-    config.update({key: value for key, value in overrides.items() if value is not None})
-    return config
+    """Get optimized OCR configuration for classification"""
+    from ocr_services.ocr_config import get_performance_config
+    
+    # Get performance-optimized config for classification
+    perf_config = get_performance_config("classification")
+    
+    # Legacy component support
+    if component:
+        legacy_config = {
+            "language_mode": component.get("language_mode", "auto"),
+            "psm": component.get("psm", 3),
+            "oem": component.get("oem", 3),
+        }
+        perf_config.update(legacy_config)
+    
+    # Apply any overrides
+    perf_config.update({key: value for key, value in overrides.items() if value is not None})
+    
+    return perf_config
 
 
 def _extract_pdf_text_ml(file_path: str, component=None, max_pages=None, logger_callback=None) -> str:
@@ -120,10 +130,10 @@ def _extract_pdf_text_ml(file_path: str, component=None, max_pages=None, logger_
     if cached_text and cached_text.strip():
         return _normalize_text(cached_text)
 
-    cache_payload = ensure_ocr_cache(
+    cache_payload = ensure_optimized_ocr_cache(
         pdf_path=file_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine=(component or {}).get("ocr_engine", "paddle"),
+        ocr_engine=get_ocr_engine_name("classification"),
         config=_get_classification_ocr_config(component, last_page=max_pages or None),
         logger_callback=logger_callback,
     )
@@ -356,10 +366,10 @@ def extract_text_per_page(pdf_path, component=None, max_pages=None, logger_callb
                 yield page_text
             return
 
-        cache_payload = ensure_ocr_cache(
+        cache_payload = ensure_optimized_ocr_cache(
             pdf_path=pdf_path,
             process_instance_dir=process_instance_dir,
-            ocr_engine=(component or {}).get("ocr_engine", "paddle"),
+            ocr_engine=get_ocr_engine_name("classification"),
             config=_get_classification_ocr_config(component, last_page=max_pages or None),
             logger_callback=logger_callback,
         )

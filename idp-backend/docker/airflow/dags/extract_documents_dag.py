@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 import ast
-from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
+from ocr_services.optimized_ocr_cache_utils import ensure_optimized_ocr_cache, get_cached_document_text, get_cached_page_texts
 
 log = LoggingMixin().log
 
@@ -288,11 +288,11 @@ def ml_extract_text_from_pdf(pdf_path, max_pages=5, logger_callback=None):
     if cached_text and cached_text.strip():
         return cached_text
 
-    cache_payload = ensure_ocr_cache(
+    cache_payload = ensure_optimized_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="paddle",
-        config={"dpi": 300, "last_page": max_pages},
+        ocr_engine="optimized",  # Use optimized service
+        config={"dpi": 200, "last_page": max_pages, "parallel": True},
         logger_callback=logger_callback,
     )
     cached_text = cache_payload.get("cleaned_text") or cache_payload.get("raw_text") or ""
@@ -418,11 +418,11 @@ def extract_text_from_pdf(pdf_path, logger_callback=None):
     if cached_page_texts:
         return cached_page_texts[:MAX_PAGES_TO_SCAN]
 
-    cache_payload = ensure_ocr_cache(
+    cache_payload = ensure_optimized_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="paddle",
-        config={"dpi": 300, "last_page": MAX_PAGES_TO_SCAN},
+        ocr_engine="optimized",  # Use optimized service
+        config={"dpi": 200, "last_page": MAX_PAGES_TO_SCAN, "parallel": True},
         logger_callback=logger_callback,
     )
     generated_page_texts = [page.get("cleaned_text") or page.get("text", "") for page in cache_payload.get("pages", [])]
