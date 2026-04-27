@@ -291,7 +291,7 @@ def ml_extract_text_from_pdf(pdf_path, max_pages=5, logger_callback=None):
     cache_payload = ensure_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="paddle_first",
+        ocr_engine="paddle",
         config={"dpi": 200, "last_page": max_pages, "parallel": False},
         logger_callback=logger_callback,
         fallback_ocr_engine="tesseract",
@@ -422,7 +422,7 @@ def extract_text_from_pdf(pdf_path, logger_callback=None):
     cache_payload = ensure_ocr_cache(
         pdf_path=pdf_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="paddle_first",
+        ocr_engine="paddle",
         config={"dpi": 250, "last_page": MAX_PAGES_TO_SCAN, "parallel": False},
         logger_callback=logger_callback,
         fallback_ocr_engine="tesseract",

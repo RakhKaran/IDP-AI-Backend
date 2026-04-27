@@ -177,7 +177,7 @@ def _needs_fallback(result: Optional[Dict]) -> bool:
 def ensure_ocr_cache(
     pdf_path: str,
     process_instance_dir: str,
-    ocr_engine: str = "paddle_first",
+    ocr_engine: str = "paddle",
     config: Optional[Dict] = None,
     cleanup_service=None,
     force_refresh: bool = False,

@@ -3,12 +3,10 @@ OCR Service Factory
 Factory pattern to create and return appropriate OCR service instances
 """
 
-from typing import Optional
 from .tesseract_ocr_service import TesseractOCRService
 from .paddle_ocr_service import PaddleOCRService
 from .optimized_ocr_service import OptimizedOCRService
 from .safe_ocr_service import SafeOCRService
-from .paddle_first_ocr_service import PaddleFirstOCRService
 from .base_ocr_service import BaseOCRService
 
 
@@ -28,21 +26,9 @@ def get_ocr_service(ocr_engine: str) -> BaseOCRService:
     ocr_engine = ocr_engine.lower().strip()
     
     if ocr_engine == 'paddle_first' or ocr_engine == 'paddle_tesseract':
-        # PaddleOCR first with Tesseract fallback - best for poor quality documents
-        return PaddleFirstOCRService(
-            paddle_timeout=45,
-            tesseract_timeout=30,
-            min_confidence_threshold=25.0,  # Lower threshold for poor quality docs
-            enable_preprocessing=True
-        )
+        return PaddleOCRService()
     elif ocr_engine == 'paddle_first_fast':
-        # Faster version with less preprocessing
-        return PaddleFirstOCRService(
-            paddle_timeout=30,
-            tesseract_timeout=20,
-            min_confidence_threshold=30.0,
-            enable_preprocessing=False
-        )
+        return PaddleOCRService()
     elif ocr_engine == 'safe' or ocr_engine == 'safe_tesseract':
         # Production-safe service with Tesseract only
         return SafeOCRService(enable_paddle_fallback=False)
@@ -52,12 +38,7 @@ def get_ocr_service(ocr_engine: str) -> BaseOCRService:
     elif ocr_engine == 'tesseract':
         return TesseractOCRService()
     elif ocr_engine == 'paddle':
-        return PaddleFirstOCRService(
-            paddle_timeout=45,
-            tesseract_timeout=30,
-            min_confidence_threshold=25.0,
-            enable_preprocessing=True
-        )
+        return PaddleOCRService()
     elif ocr_engine == 'optimized':
         # Production-grade optimized service with Tesseract primary, Paddle fallback
         return OptimizedOCRService(

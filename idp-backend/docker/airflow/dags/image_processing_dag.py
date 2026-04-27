@@ -189,9 +189,7 @@ def process_documents_with_ocr(**context):
         
         # Get configuration from blueprint
         component = image_processing_node.get("component", {})
-        ocr_engine = component.get("ocr_engine", "paddle_first").lower()
-        if ocr_engine == "paddle":
-            ocr_engine = "paddle_first"
+        ocr_engine = component.get("ocr_engine", "paddle").lower()
         language_mode = component.get("language_mode", "auto")
         ai_cleanup = component.get("ai_cleanup", False)
         output_format = component.get("output_format", "txt")  # Default to txt

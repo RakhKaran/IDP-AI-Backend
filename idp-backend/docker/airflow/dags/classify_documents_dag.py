@@ -85,7 +85,7 @@ def _normalize_text(text: str) -> str:
 def _get_ocr_service():
     global _OCR_SERVICE
     if _OCR_SERVICE is None:
-        _OCR_SERVICE = get_ocr_service("paddle_first")
+        _OCR_SERVICE = get_ocr_service("paddle")
     return _OCR_SERVICE
 
 
@@ -132,7 +132,7 @@ def _extract_pdf_text_ml(file_path: str, component=None, max_pages=None, logger_
     cache_payload = ensure_ocr_cache(
         pdf_path=file_path,
         process_instance_dir=process_instance_dir,
-        ocr_engine="paddle_first",
+        ocr_engine="paddle",
         config=_get_classification_ocr_config(component, last_page=max_pages or None),
         logger_callback=logger_callback,
         fallback_ocr_engine="tesseract",
@@ -369,7 +369,7 @@ def extract_text_per_page(pdf_path, component=None, max_pages=None, logger_callb
         cache_payload = ensure_ocr_cache(
             pdf_path=pdf_path,
             process_instance_dir=process_instance_dir,
-            ocr_engine="paddle_first",
+            ocr_engine="paddle",
             config=_get_classification_ocr_config(component, last_page=max_pages or None),
             logger_callback=logger_callback,
             fallback_ocr_engine="tesseract",
