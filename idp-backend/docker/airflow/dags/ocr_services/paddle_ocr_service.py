@@ -67,7 +67,6 @@ class PaddleOCRService(BaseOCRService):
         engine_config = {
             "use_angle_cls": use_angle_cls,
             "lang": lang,
-            "use_gpu": False,
         }
 
         if self._ocr_engine is None or self._engine_config != engine_config:
