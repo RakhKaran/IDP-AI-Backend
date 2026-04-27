@@ -1,11 +1,11 @@
 FROM apache/airflow:3.0.1-python3.10
 
 USER airflow
-RUN pip install \
+RUN pip install --no-cache-dir \
     openai \
     pytesseract \
     paddleocr \
-    paddlepaddle==2.6.1 \
+    paddlepaddle==2.6.2 \
     pdf2image \
     pyspellchecker \
     Pillow \
