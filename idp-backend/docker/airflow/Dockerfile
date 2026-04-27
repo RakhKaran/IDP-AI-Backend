@@ -5,7 +5,7 @@ RUN pip install --no-cache-dir \
     openai \
     pytesseract \
     paddleocr \
-    paddlepaddle==2.6.2 \
+    paddlepaddle==3.1.1 \
     pdf2image \
     pyspellchecker \
     Pillow \
