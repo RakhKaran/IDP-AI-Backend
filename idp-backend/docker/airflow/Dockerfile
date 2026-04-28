@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+USER airflow
+
 RUN pip install --no-cache-dir \
     openai \
     pytesseract \
@@ -35,5 +37,3 @@ RUN pip install --no-cache-dir \
     scikit-learn==1.4.2 \
     scikit-image==0.22.0 \
     opencv-python-headless==4.8.1.78
-
-USER airflow
