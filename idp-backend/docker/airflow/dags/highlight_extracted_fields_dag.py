@@ -134,11 +134,17 @@ def fuzzy_ratio(a, b):
     return int(SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio() * 100)
 
 def near_line(block_top, img_height, target_line, total_lines=40):
+    # No line hint = allow full page
     if not target_line:
         return True
 
     approx_line = int((block_top / img_height) * total_lines)
-    return abs(approx_line - target_line) <= 5
+
+    # Search slightly above and more below
+    min_line = max(1, target_line - 5)
+    max_line = target_line + 10
+
+    return min_line <= approx_line <= max_line
 
 def highlight_and_upload(**context):
     process_instance_id = context["dag_run"].conf.get("id")
