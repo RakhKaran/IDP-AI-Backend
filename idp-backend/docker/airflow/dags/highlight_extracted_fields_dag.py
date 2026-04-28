@@ -168,7 +168,21 @@ def highlight_and_upload(**context):
 
         if isinstance(raw_fields, dict):
             for k, v in raw_fields.items():
-                fields.append({"fieldName": k, "fieldValue": v})
+
+                if isinstance(v, dict):
+                    fields.append({
+                        "fieldName": k,
+                        "fieldValue": v.get("value", ""),
+                        "pageNumber": v.get("pageNumber"),
+                        "lineNumber": v.get("lineNumber")
+                    })
+                else:
+                    fields.append({
+                        "fieldName": k,
+                        "fieldValue": v,
+                        "pageNumber": None,
+                        "lineNumber": None
+                    })
         else:
             print(f"⚠️ Unexpected format for extractedFields: {type(raw_fields)}")
             log_to_mongo(process_instance_id, message = f"Unexpected format for extractedFields: {type(raw_fields)}", node_name = "Validation", log_type=3)
@@ -186,7 +200,13 @@ def highlight_and_upload(**context):
             field_name = field.get("fieldName", "")
             value = field.get("fieldValue", "")
 
-            if str(value).strip().upper() == "N/A":
+            val_txt = str(value).strip().lower()
+
+            if (
+                not val_txt
+                or val_txt == "n/a"
+                or "scan quality prevented" in val_txt
+            ):
                 continue
             prompt = f"""
             You are validating extracted data from a scanned document.
@@ -218,15 +238,28 @@ def highlight_and_upload(**context):
                     validated_fields.append({
                         "fieldName": field_name,
                         "fieldValue": value,
-                        "fieldScore": score
+                        "fieldScore": score,
+                        "pageNumber": field.get("pageNumber"),
+                        "lineNumber": field.get("lineNumber")
                     })
                     score_sum += score
             except Exception as e:
                 print(f"Validation failed for {field_name}: {e}")
                 log_to_mongo(process_instance_id, message = f"Validation failed for {field_name}: {e}", node_name = "Validation", log_type=1)
 
-        overall_score = round(score_sum / len(validated_fields)) if validated_fields else 0
-        doc["extractedFields"] = validated_fields
+            overall_score = round(score_sum / len(validated_fields)) if validated_fields else 0
+
+            if validated_fields:
+                doc["extractedFields"] = validated_fields
+            else:
+                doc["extractedFields"] = [
+                    {
+                        "fieldName": f["fieldName"],
+                        "fieldValue": f["fieldValue"],
+                        "fieldScore": 0
+                    }
+                    for f in fields
+                ]
 
         with open(cleaned_fields_path, "w") as f:
             json.dump(extracted_data, f, indent=2)

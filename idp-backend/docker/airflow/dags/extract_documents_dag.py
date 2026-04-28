@@ -189,6 +189,23 @@ def normalize_extracted_payload(payload):
         return [normalize_extracted_payload(item) for item in payload]
     return normalize_extracted_value(payload)
 
+def detect_line_number(page_text, value):
+    try:
+        target = str(value).strip().lower()
+
+        if not target:
+            return None
+
+        lines = page_text.splitlines()
+
+        for idx, line in enumerate(lines, start=1):
+            if target in line.lower():
+                return idx
+
+        return None
+    except Exception:
+        return None
+
 
 def page_contains_relevant_keywords(page_text, field_prompts, doc_type):
     keywords = {"agreement", "contract", "amount", "date", "ref"}
@@ -530,7 +547,15 @@ def extract_fields_from_documents(**context):
                 continue
 
             field_prompts = extractor_fields[str(doc_type_id)]
-            extracted = {field["variableName"]: "N/A" for field in field_prompts}
+            extracted = {
+                field["variableName"]: {
+                    "value": "Field may exist but scan quality prevented reliable extraction.",
+                    "pageNumber": None,
+                    "lineNumber": None
+                }
+                for field in field_prompts
+            }
+
             extractor_method = extractors.get(str(doc_type_id), "genai").lower()
 
             if extractor_method == "ml":
@@ -608,7 +633,15 @@ def extract_fields_from_documents(**context):
                                 continue
                             if value in [None, "", [], {}]:
                                 continue
-                            extracted[field_name] = value
+                            
+                            line_no = detect_line_number(page_text, value)
+
+                            extracted[field_name] = {
+                                "value": value,
+                                "pageNumber": page_num,
+                                "lineNumber": line_no
+                            }
+
                             remaining_fields.discard(field_name)
 
                         log_to_mongo(
