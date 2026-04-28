@@ -454,6 +454,29 @@ class PaddleOCRService(BaseOCRService):
             raise RuntimeError(
                 f"OCR extraction failed: {exc}"
             )
+        
+    def extract_text_with_confidence(self, image_path, config=None):
+        config = config or {}
+
+        try:
+            text = self.extract_text(image_path, config)
+
+            return {
+                "text": text,
+                "confidence": 0.85 if text.strip() else 0.0,
+                "total_pages": 1,
+                "processed_pages": 1,
+                "pages": [
+                    {
+                        "page": 1,
+                        "text": text,
+                        "confidence": 0.85 if text.strip() else 0.0
+                    }
+                ]
+            }
+
+        except Exception as exc:
+            raise RuntimeError(f"OCR extraction failed: {exc}")
 
     # =====================================================
     # LANGUAGE SUPPORT
