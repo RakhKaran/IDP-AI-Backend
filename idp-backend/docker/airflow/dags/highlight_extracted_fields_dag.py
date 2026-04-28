@@ -319,13 +319,16 @@ def highlight_and_upload(**context):
             for field in validated_fields:
 
                 target_page = field.get("pageNumber")
-                target_line = field.get("lineNumber")
 
                 # Search only intended page
                 if target_page and int(target_page) != page_index:
                     continue
 
-                field_value = str(field.get("fieldValue", "")).strip().lower()
+                field_value = re.sub(
+                    r'[^a-z0-9]',
+                    '',
+                    str(field.get("fieldValue", "")).lower()
+                )
 
                 if not field_value:
                     continue
@@ -335,17 +338,11 @@ def highlight_and_upload(**context):
 
                 for block in text_blocks:
 
-                    # line proximity preference
-                    if not near_line(
-                        block["top"],
-                        image.height,
-                        target_line
-                    ):
-                        continue
+                    block_text = re.sub(r'[^a-z0-9]', '', block["text"])
 
                     score = fuzzy_ratio(
                         field_value,
-                        block["text"]
+                        block_text
                     )
 
                     # substring boost
@@ -356,7 +353,7 @@ def highlight_and_upload(**context):
                         best_score = score
                         best_match = block
 
-                if best_match and best_score >= 65:
+                if best_match and best_score >= 58:
 
                     x = best_match["left"]
                     y = best_match["top"]
