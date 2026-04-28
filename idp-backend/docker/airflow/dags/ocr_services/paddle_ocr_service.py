@@ -128,52 +128,120 @@ class PaddleOCRService(BaseOCRService):
 
         return rotated
 
-    # ======================================================
-    # Preprocess
-    # ======================================================
 
     def _preprocess_image(self, image):
+        import cv2
+        import numpy as np
+
+        # ----------------------------------
+        # PIL -> OpenCV
+        # ----------------------------------
         img = np.array(image.convert("RGB"))
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-        low_quality = self._is_low_quality(gray)
+        # ----------------------------------
+        # 1. Upscale for tiny text
+        # ----------------------------------
+        h, w = gray.shape[:2]
 
-        gray = cv2.fastNlMeansDenoising(gray)
-
-        if low_quality:
+        if w < 2000:
             gray = cv2.resize(
-                gray, None, fx=2, fy=2,
+                gray,
+                None,
+                fx=2,
+                fy=2,
                 interpolation=cv2.INTER_CUBIC
             )
 
-        # CLAHE
+        # ----------------------------------
+        # 2. Strong denoise
+        # ----------------------------------
+        gray = cv2.fastNlMeansDenoising(
+            gray,
+            None,
+            18,
+            7,
+            21
+        )
+
+        # ----------------------------------
+        # 3. CLAHE Contrast Boost
+        # ----------------------------------
         clahe = cv2.createCLAHE(
-            clipLimit=3.0,
+            clipLimit=4.0,
             tileGridSize=(8, 8)
         )
         gray = clahe.apply(gray)
 
-        # Deskew
-        gray = self._deskew(gray)
+        # ----------------------------------
+        # 4. Sharpen Text
+        # ----------------------------------
+        kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0]
+        ])
 
-        # Threshold
+        gray = cv2.filter2D(gray, -1, kernel)
+
+        # ----------------------------------
+        # 5. Deskew
+        # ----------------------------------
+        coords = np.column_stack(np.where(gray < 220))
+
+        if len(coords) > 0:
+            angle = cv2.minAreaRect(coords)[-1]
+
+            if angle < -45:
+                angle = -(90 + angle)
+            else:
+                angle = -angle
+
+            h, w = gray.shape[:2]
+            center = (w // 2, h // 2)
+
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+            gray = cv2.warpAffine(
+                gray,
+                M,
+                (w, h),
+                flags=cv2.INTER_CUBIC,
+                borderMode=cv2.BORDER_REPLICATE
+            )
+
+        # ----------------------------------
+        # 6. Background cleanup
+        # ----------------------------------
+        blur = cv2.GaussianBlur(gray, (0, 0), 25)
+        gray = cv2.divide(gray, blur, scale=255)
+
+        # ----------------------------------
+        # 7. Adaptive threshold
+        # ----------------------------------
         gray = cv2.adaptiveThreshold(
             gray,
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
             31,
-            10
+            8
         )
 
-        # Morph cleanup
+        # ----------------------------------
+        # 8. Morph cleanup
+        # ----------------------------------
         kernel = np.ones((1, 1), np.uint8)
+
         gray = cv2.morphologyEx(
             gray,
             cv2.MORPH_OPEN,
             kernel
         )
 
+        # ----------------------------------
+        # Return RGB for PaddleOCR
+        # ----------------------------------
         return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
 
     # ======================================================
