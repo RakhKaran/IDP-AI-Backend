@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from transaction_status import sync_stage_status
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text
+from difflib import SequenceMatcher
 
 load_dotenv() 
 
@@ -128,6 +129,16 @@ def extract_text_from_pdf(pdf_path, logger_callback=None):
         print(f"OCR failed for {pdf_path}: {e}")
         log_to_mongo(process_instance_id, message = f"OCR failed for {pdf_path}: {e}", node_name = "Validation", log_type=1)
         return ""
+    
+def fuzzy_ratio(a, b):
+    return int(SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio() * 100)
+
+def near_line(block_top, img_height, target_line, total_lines=40):
+    if not target_line:
+        return True
+
+    approx_line = int((block_top / img_height) * total_lines)
+    return abs(approx_line - target_line) <= 5
 
 def highlight_and_upload(**context):
     process_instance_id = context["dag_run"].conf.get("id")
@@ -273,37 +284,90 @@ def highlight_and_upload(**context):
         images = convert_from_path(pdf_path)
         highlighted_images = []
 
-        for image in images:
+        for page_index, image in enumerate(images, start=1):
+
             overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
             draw_overlay = ImageDraw.Draw(overlay)
+
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            draw = ImageDraw.Draw(image)
-            ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+
+            ocr_data = pytesseract.image_to_data(
+                image,
+                output_type=pytesseract.Output.DICT
+            )
 
             text_blocks = [
                 {
-                    "text": ocr_data["text"][i].lower(),
+                    "text": str(ocr_data["text"][i]).lower(),
                     "left": ocr_data["left"][i],
                     "top": ocr_data["top"][i],
                     "width": ocr_data["width"][i],
                     "height": ocr_data["height"][i]
                 }
-                for i in range(len(ocr_data["text"])) if str(ocr_data["text"][i]).strip() and int(ocr_data["conf"][i]) > 60
+                for i in range(len(ocr_data["text"]))
+                if str(ocr_data["text"][i]).strip()
+                and int(ocr_data["conf"][i]) > 45
             ]
 
             for field in validated_fields:
-                val_words = re.findall(r'[a-z0-9]+', str(field["fieldValue"]).lower())
-                for i in range(len(text_blocks) - len(val_words) + 1):
-                    if all(val_words[j] == text_blocks[i + j]["text"] for j in range(len(val_words))):
-                        x = text_blocks[i]["left"]
-                        y = text_blocks[i]["top"]
-                        x_end = text_blocks[i + len(val_words) - 1]["left"] + text_blocks[i + len(val_words) - 1]["width"]
-                        y_end = text_blocks[i + len(val_words) - 1]["top"] + text_blocks[i + len(val_words) - 1]["height"]
-                        draw_overlay.rectangle([(x, y), (x_end, y_end)], fill=(255, 255, 102, 100), outline=(255, 204, 0, 200))
-                        break
 
-            image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
+                target_page = field.get("pageNumber")
+                target_line = field.get("lineNumber")
+
+                # Search only intended page
+                if target_page and int(target_page) != page_index:
+                    continue
+
+                field_value = str(field.get("fieldValue", "")).strip().lower()
+
+                if not field_value:
+                    continue
+
+                best_match = None
+                best_score = 0
+
+                for block in text_blocks:
+
+                    # line proximity preference
+                    if not near_line(
+                        block["top"],
+                        image.height,
+                        target_line
+                    ):
+                        continue
+
+                    score = fuzzy_ratio(
+                        field_value,
+                        block["text"]
+                    )
+
+                    # substring boost
+                    if block["text"] in field_value or field_value in block["text"]:
+                        score += 20
+
+                    if score > best_score:
+                        best_score = score
+                        best_match = block
+
+                if best_match and best_score >= 65:
+
+                    x = best_match["left"]
+                    y = best_match["top"]
+                    x_end = x + best_match["width"]
+                    y_end = y + best_match["height"]
+
+                    draw_overlay.rectangle(
+                        [(x, y), (x_end, y_end)],
+                        fill=(255, 255, 102, 100),
+                        outline=(255, 204, 0, 200)
+                    )
+
+            image = Image.alpha_composite(
+                image.convert('RGBA'),
+                overlay
+            ).convert('RGB')
+
             highlighted_images.append(image)
 
         output_pdf = os.path.join(highlighted_dir, document_name)
