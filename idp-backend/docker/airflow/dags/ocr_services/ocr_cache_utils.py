@@ -5,6 +5,7 @@ Shared OCR enhancement and cache helpers for document DAGs.
 import json
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 import cv2
@@ -174,6 +175,29 @@ def _needs_fallback(result: Optional[Dict]) -> bool:
     return False
 
 
+def _is_poor_quality_image(image: Image.Image) -> bool:
+    """
+    Fast heuristic for scan quality.
+    Returns True when preprocessing is likely to help.
+    """
+    rgb = image.convert("RGB")
+    arr = np.array(rgb)
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    contrast_score = float(np.std(gray))
+    brightness = float(np.mean(gray))
+
+    # Low sharpness + low contrast are common in poor scans.
+    # Extreme brightness indicates washout/underexposure.
+    return (
+        blur_score < 60.0
+        or contrast_score < 35.0
+        or brightness < 75.0
+        or brightness > 205.0
+    )
+
+
 def ensure_ocr_cache(
     pdf_path: str,
     process_instance_dir: str,
@@ -214,7 +238,30 @@ def ensure_ocr_cache(
     images = convert_from_path(pdf_path, **convert_kwargs)
     page_results = []
 
-    for page_number, image in enumerate(images, start=1):
+    quality_sample_size = min(len(images), int(config.get("quality_sample_pages", 3) or 3))
+    poor_quality_votes = 0
+    for quality_image in images[:quality_sample_size]:
+        try:
+            if _is_poor_quality_image(quality_image):
+                poor_quality_votes += 1
+        except Exception:
+            # If quality check fails for a sample page, treat it as poor to preserve accuracy.
+            poor_quality_votes += 1
+    should_preprocess = poor_quality_votes > 0
+
+    if logger_callback:
+        logger_callback(
+            "info",
+            (
+                f"Quality gate for {pdf_filename}: poor_samples={poor_quality_votes}/"
+                f"{quality_sample_size}, preprocessing={'enabled' if should_preprocess else 'disabled'}"
+            ),
+        )
+
+    max_workers = int(config.get("max_workers") or config.get("workers") or 3)
+    max_workers = max(1, min(max_workers, len(images) if images else 1))
+
+    def _process_single_page(page_number: int, image: Image.Image) -> Dict:
         original_temp_image_path = os.path.join(
             get_ocr_output_dir(process_instance_dir),
             f".tmp_{os.path.splitext(pdf_filename)[0]}_{page_number}_orig.png",
@@ -232,15 +279,20 @@ def ensure_ocr_cache(
                 )
 
             image.convert("RGB").save(original_temp_image_path, format="PNG")
-            enhanced_image = enhance_image_for_ocr(image)
-            enhanced_image.save(enhanced_temp_image_path, format="PNG")
             page_conf = dict(config)
             original_result = ocr_service.extract_text_with_confidence(original_temp_image_path, page_conf)
-            enhanced_result = ocr_service.extract_text_with_confidence(enhanced_temp_image_path, page_conf)
-            page_result = max(
-                [original_result, enhanced_result],
-                key=_score_ocr_result,
-            )
+            enhanced_result = None
+
+            if should_preprocess:
+                enhanced_image = enhance_image_for_ocr(image)
+                enhanced_image.save(enhanced_temp_image_path, format="PNG")
+                enhanced_result = ocr_service.extract_text_with_confidence(enhanced_temp_image_path, page_conf)
+                page_result = max(
+                    [original_result, enhanced_result],
+                    key=_score_ocr_result,
+                )
+            else:
+                page_result = original_result
             page_text = (page_result.get("text") or "").strip()
 
             if logger_callback:
@@ -248,16 +300,16 @@ def ensure_ocr_cache(
                     "info",
                     f"OCR variants for {pdf_filename} page {page_number}: "
                     f"original_chars={len((original_result.get('text') or '').strip())}, "
-                    f"enhanced_chars={len((enhanced_result.get('text') or '').strip())}",
+                    f"enhanced_chars={len((enhanced_result.get('text') or '').strip()) if enhanced_result else 0}",
                 )
 
             if fallback_service and _needs_fallback(page_result):
                 fallback_original = fallback_service.extract_text_with_confidence(original_temp_image_path, page_conf)
-                fallback_enhanced = fallback_service.extract_text_with_confidence(enhanced_temp_image_path, page_conf)
-                fallback_result = max(
-                    [fallback_original, fallback_enhanced],
-                    key=_score_ocr_result,
-                )
+                fallback_candidates = [fallback_original]
+                if should_preprocess and os.path.exists(enhanced_temp_image_path):
+                    fallback_enhanced = fallback_service.extract_text_with_confidence(enhanced_temp_image_path, page_conf)
+                    fallback_candidates.append(fallback_enhanced)
+                fallback_result = max(fallback_candidates, key=_score_ocr_result)
                 fallback_text = (fallback_result.get("text") or "").strip()
                 if _score_ocr_result(fallback_result) > _score_ocr_result(page_result):
                     page_result = fallback_result
@@ -275,26 +327,36 @@ def ensure_ocr_cache(
                 except Exception:
                     cleaned_page_text = page_text
 
-            page_results.append(
-                {
-                    "page_number": page_number,
-                    "text": page_text,
-                    "cleaned_text": cleaned_page_text,
-                    "confidence": page_result.get("confidence", 0.0),
-                    "character_count": len(page_text),
-                }
-            )
-
             if logger_callback:
                 logger_callback(
                     "success" if page_text else "warning",
                     f"OCR finished for {pdf_filename} page {page_number}: chars={len(page_text)}, confidence={round(float(page_result.get('confidence', 0.0)), 2)}",
                 )
+
+            return {
+                "page_number": page_number,
+                "text": page_text,
+                "cleaned_text": cleaned_page_text,
+                "confidence": page_result.get("confidence", 0.0),
+                "character_count": len(page_text),
+            }
         finally:
+            image.close()
             if os.path.exists(original_temp_image_path):
                 os.remove(original_temp_image_path)
             if os.path.exists(enhanced_temp_image_path):
                 os.remove(enhanced_temp_image_path)
+
+    if images:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(_process_single_page, page_number, image): page_number
+                for page_number, image in enumerate(images, start=1)
+            }
+            for future in as_completed(future_map):
+                page_results.append(future.result())
+
+    page_results.sort(key=lambda page: page.get("page_number", 0))
 
     cleaned_text = "\n".join(
         _resolve_page_text(page_result) for page_result in page_results if _resolve_page_text(page_result)

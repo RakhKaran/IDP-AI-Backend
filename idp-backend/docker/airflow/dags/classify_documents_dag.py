@@ -113,6 +113,10 @@ def _get_classification_ocr_config(component=None, **overrides):
         }
         perf_config.update(legacy_config)
     
+    # Enable parallel page OCR for classification by default.
+    perf_config["parallel"] = True
+    perf_config["max_workers"] = max(2, int(perf_config.get("max_workers", 2) or 2))
+
     # Apply any overrides
     perf_config.update({key: value for key, value in overrides.items() if value is not None})
     

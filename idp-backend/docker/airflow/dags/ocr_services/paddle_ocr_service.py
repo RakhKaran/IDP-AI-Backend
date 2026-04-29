@@ -78,7 +78,7 @@ class PaddleOCRService(BaseOCRService):
             "use_angle_cls": True,
             "show_log": False,
             "use_gpu": False,
-            "cpu_threads": 4,
+            "cpu_threads": 2,
         }
 
         if self._ocr_engine is None or self._engine_config != engine_config:
@@ -399,7 +399,7 @@ class PaddleOCRService(BaseOCRService):
                 )
 
                 dpi = config.get("dpi", 300)
-                workers = config.get("workers", 4)
+                workers = config.get("workers", 3)
 
                 results = {}
 
