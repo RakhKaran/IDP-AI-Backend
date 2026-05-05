@@ -13,12 +13,12 @@ from transaction_status import sync_stage_status
 load_dotenv()
 
 LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
-MCP_ENDPOINT = os.getenv("MCP_ENDPOINT", "http://13.203.33.247:8002/mcp")
+MCP_ENDPOINT = os.getenv("MCP_ENDPOINT", "http://187.127.158.113:8002/mcp")
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
 MCP_JSONRPC_METHOD = os.getenv("MCP_JSONRPC_METHOD", "tools/call")
 MCP_PROTOCOL_VERSION = os.getenv("MCP_PROTOCOL_VERSION", "2024-11-05")
-PROCESSING_BASE_URL = os.getenv("PROCESSING_BASE_URL", "http://13.203.33.247:8002")
+PROCESSING_BASE_URL = os.getenv("PROCESSING_BASE_URL", "http://187.127.158.113:8002")
 DOCUMENT_INDEX_STATUS_POLL_INTERVAL_SECONDS = int(
     os.getenv("DOCUMENT_INDEX_STATUS_POLL_INTERVAL_SECONDS", "10")
 )
