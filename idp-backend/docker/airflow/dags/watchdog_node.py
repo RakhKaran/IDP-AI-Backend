@@ -7,6 +7,7 @@ import requests
 import json
 import os
 from dotenv import load_dotenv
+from idp_callbacks import task_failure_callback
 
 # Configuration
 load_dotenv() 
@@ -134,6 +135,7 @@ with DAG(
     schedule='*/5 * * * *',  # Every 5 minutes
     catchup=False,
     tags=['idp', 'watchdog'],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     monitor_task = PythonOperator(

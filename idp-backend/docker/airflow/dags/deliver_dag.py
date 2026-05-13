@@ -14,6 +14,7 @@ import base64
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 
 load_dotenv() 
 
@@ -250,7 +251,8 @@ with DAG(
     start_date=datetime.now() - timedelta(days=1),
     schedule=None,
     catchup=False,
-    tags=["idp", "deliver"]
+    tags=["idp", "deliver"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
     deliver_task = PythonOperator(
         task_id="deliver_documents",

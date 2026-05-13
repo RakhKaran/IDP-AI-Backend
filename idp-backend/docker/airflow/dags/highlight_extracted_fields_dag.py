@@ -14,6 +14,7 @@ from opik.integrations.openai import track_openai
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text
 from difflib import SequenceMatcher
 
@@ -443,7 +444,8 @@ with DAG(
     start_date=datetime.now() - timedelta(days=1),
     schedule=None,
     catchup=False,
-    tags=["idp", "highlighting"]
+    tags=["idp", "highlighting"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     highlight_task = PythonOperator(

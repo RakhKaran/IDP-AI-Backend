@@ -9,6 +9,8 @@ import os
 import requests
 import time
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
+from idp_callbacks import log_event
 
 load_dotenv()
 
@@ -394,6 +396,8 @@ def run_document_index(**context):
     if not process_instance_id:
         raise ValueError("Missing process_instance_id in dag_run.conf")
 
+    log_event(context, "Document Index started", level="info")
+
     process_instance_dir = os.path.join(
         LOCAL_DOWNLOAD_DIR,
         f"process-instance-{process_instance_id}"
@@ -407,6 +411,11 @@ def run_document_index(**context):
     try:
         transaction_id = sync_stage_status(cursor, process_instance_id, "Document Index", 1)
         conn.commit()
+        log_event(
+            context,
+            f"Stage synced to 'Document Index' (transaction_id={transaction_id})",
+            level="success",
+        )
 
         blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
         node_component = _find_node_component(blueprint, {"document index", "index document"})
@@ -505,7 +514,12 @@ def run_document_index(**context):
                     log_type=0,
                 )
                 process_response = _invoke_mcp_tool("process_documents", process_args, mcp_session_id)
-                print('process response : ', process_response)
+                log_to_mongo(
+                    process_instance_id,
+                    "Document Index",
+                    f"process_documents response received for doc_index_id={doc_index_id}",
+                    log_type=0,
+                )
                 _raise_if_mcp_tool_error(process_response)
                 process_result = process_response.get("result", {}) if isinstance(process_response, dict) else {}
                 structured_content = (
@@ -550,6 +564,7 @@ def run_document_index(**context):
             f"MCP indexing completed successfully via '{tool_name}'",
             log_type=2,
         )
+        log_event(context, "Document Index completed successfully", level="success")
     except Exception as exc:
         conn.rollback()
         log_to_mongo(
@@ -559,6 +574,7 @@ def run_document_index(**context):
             log_type=1,
             remark="document_index_dag failure",
         )
+        log_event(context, f"Document Index failed: {type(exc).__name__}: {exc}", level="error")
         raise
     finally:
         cursor.close()
@@ -581,6 +597,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "document-index"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
     index_task = PythonOperator(
         task_id="run_document_index",

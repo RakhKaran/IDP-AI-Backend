@@ -9,6 +9,7 @@ import os
 import requests
 from urllib.parse import urlencode
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 
 load_dotenv()
 
@@ -262,6 +263,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "integration"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
     integration_task = PythonOperator(
         task_id="run_integration",

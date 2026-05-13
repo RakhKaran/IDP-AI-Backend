@@ -9,6 +9,7 @@ import os
 import requests
 import time
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 
 load_dotenv()
 
@@ -427,6 +428,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "document-query"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
     query_task = PythonOperator(
         task_id="run_document_query",

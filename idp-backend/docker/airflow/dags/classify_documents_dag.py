@@ -18,6 +18,8 @@ from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 from ocr_services.ocr_service_factory import get_ocr_service
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
+from idp_callbacks import task_failure_callback
+from idp_callbacks import log_event
 
 load_dotenv()
 
@@ -408,6 +410,8 @@ def classify_documents(**context):
     if not process_instance_id:
         raise ValueError("Missing process_instance_id in dag_run.conf")
 
+    log_event(context, "Classification started", level="info")
+
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
     blueprint_path = os.path.join(process_instance_dir_path, "blueprint.json")
@@ -655,6 +659,8 @@ def classify_documents(**context):
                 log_type=2,
             )
 
+        log_event(context, "Classification completed successfully", level="success")
+
     except Exception as e:
         conn.rollback()
         error_message = f"{type(e).__name__}: {str(e)}"
@@ -672,6 +678,7 @@ def classify_documents(**context):
             log_type=1,
             remark="DAG failed at classification",
         )
+        log_event(context, f"Classification failed: {error_message}", level="error")
         raise
     finally:
         cursor.close()
@@ -684,6 +691,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "classification"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     classify_task = PythonOperator(

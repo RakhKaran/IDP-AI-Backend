@@ -13,6 +13,8 @@ import base64
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
+from idp_callbacks import log_event
 
 load_dotenv() 
 
@@ -117,6 +119,8 @@ def fetch_blueprint_and_download_docs(**context):
         raise ValueError("Missing process_instance_id in dag_run.conf")
         log_to_mongo(process_instance_id, message = "Missing process_instance_id in dag_run.conf", node_name = "Ingestion", log_type=1)
         
+    log_event(context, "Ingestion started", level="info")
+
     global AUTO_EXECUTE_NEXT_NODE
     valid_extensions = ['.pdf']
 
@@ -178,11 +182,13 @@ def fetch_blueprint_and_download_docs(**context):
         with open(BLUEPRINT_JSON_PATH, "w") as f:
             json.dump(blueprint_json, f, indent=2)
         print(f"✅ Blueprint saved to {BLUEPRINT_JSON_PATH}")
+        log_to_mongo(process_instance_id, "Ingestion", f"Blueprint saved to {BLUEPRINT_JSON_PATH}", log_type=0)
 
         # 4. Update ProcessInstances table
         transaction_id = sync_stage_status(cursor, process_instance_id, "Ingestion", 1)
         conn.commit()
         print(f"✅ Updated ProcessInstance {process_instance_id} to Ingestion stage")
+        log_to_mongo(process_instance_id, "Ingestion", f"ProcessInstance updated to Ingestion stage (id={process_instance_id})", log_type=0)
         log_to_mongo(process_instance_id, "Ingestion", f"Stage synced to 'Ingestion' with transaction_id={transaction_id}", log_type=2)
 
 
@@ -208,6 +214,7 @@ def fetch_blueprint_and_download_docs(**context):
         # 6. Handle ingestion based on channelType
         channel_type = ingestion_config.get("channelType").lower()
         print(f"Ingestion Channel Type: {channel_type}")
+        log_to_mongo(process_instance_id, "Ingestion", f"Ingestion channelType={channel_type}", log_type=0)
         documents = []
 
         if channel_type == "ftp":
@@ -328,6 +335,8 @@ def fetch_blueprint_and_download_docs(**context):
             print(f"✅ Successfully triggered extract_documents_dag with ID {process_instance_id}")
             log_to_mongo(process_instance_id, "Ingestion", "Successfully triggered classify_documents_dag", log_type=2)
 
+        log_event(context, "Ingestion completed successfully", level="success")
+
     except Exception as e:
     
         conn.rollback()
@@ -341,6 +350,7 @@ def fetch_blueprint_and_download_docs(**context):
             log_type=1,
             remark="DAG failed at ingestion"
         )
+        log_event(context, f"Ingestion failed: {error_message}", level="error")
 
         raise
 
@@ -366,6 +376,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "ingestion"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     ingest_task = PythonOperator(

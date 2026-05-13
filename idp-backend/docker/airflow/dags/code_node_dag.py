@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 
 load_dotenv()
 
@@ -324,6 +325,7 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["process", "code"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     run_task = PythonOperator(

@@ -12,6 +12,8 @@ import os
 import re
 import requests
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
+from idp_callbacks import log_event
 
 load_dotenv()
 
@@ -773,6 +775,8 @@ def run_external_data_sources(**context):
     if not process_instance_id:
         raise ValueError("Missing process_instance_id in dag_run.conf")
 
+    log_event(context, "External Data Sources started", level="info")
+
     process_instance_dir = os.path.join(
         LOCAL_DOWNLOAD_DIR,
         f"process-instance-{process_instance_id}"
@@ -786,6 +790,11 @@ def run_external_data_sources(**context):
     try:
         transaction_id = sync_stage_status(cursor, process_instance_id, "External Data Sources", 1)
         conn.commit()
+        log_event(
+            context,
+            f"Stage synced to 'External Data Sources' (transaction_id={transaction_id})",
+            level="success",
+        )
 
         blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
         component = _find_node_component(blueprint)
@@ -793,6 +802,7 @@ def run_external_data_sources(**context):
             raise ValueError("External Data Sources node not found in blueprint")
 
         source_type = str(component.get("sourceType", "")).strip().lower()
+        log_event(context, f"sourceType selected: {source_type}", level="info")
         if source_type == "api":
             _run_api_connector(component, process_instance_id, process_instance_dir)
         elif source_type == "website":
@@ -804,6 +814,8 @@ def run_external_data_sources(**context):
         else:
             raise ValueError(f"Unsupported sourceType '{source_type}' in External Data Sources node")
 
+        log_event(context, "External Data Sources completed successfully", level="success")
+
     except Exception as exc:
         conn.rollback()
         log_to_mongo(
@@ -813,6 +825,7 @@ def run_external_data_sources(**context):
             log_type=1,
             remark="external_data_sources_dag failure",
         )
+        log_event(context, f"External Data Sources failed: {type(exc).__name__}: {exc}", level="error")
         raise
     finally:
         cursor.close()
@@ -835,6 +848,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "external-data-sources"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
     external_data_sources_task = PythonOperator(
         task_id="run_external_data_sources",

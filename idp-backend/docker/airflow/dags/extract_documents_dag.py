@@ -19,6 +19,7 @@ import signal
 from contextlib import contextmanager
 from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 import ast
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
 
@@ -733,6 +734,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "extraction"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     extract_task = PythonOperator(

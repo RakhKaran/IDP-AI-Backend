@@ -13,6 +13,7 @@ import requests
 from dotenv import load_dotenv
 from transaction_status import sync_stage_status
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text
+from idp_callbacks import task_failure_callback
 
 load_dotenv() 
 
@@ -230,7 +231,8 @@ with DAG(
     start_date=datetime.now() - timedelta(days=1),
     schedule=None,
     catchup=False,
-    tags=["idp", "validation"]
+    tags=["idp", "validation"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     validate_task = PythonOperator(

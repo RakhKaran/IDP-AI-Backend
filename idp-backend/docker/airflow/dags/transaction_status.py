@@ -51,3 +51,36 @@ def sync_stage_status(cursor, process_instance_id, current_stage, is_instance_ru
     )
 
     return transaction_id
+
+
+def pause_process_instance(
+    process_instance_id,
+    current_stage,
+    *,
+    mysql_conn_id="idp_mysql",
+):
+    """
+    Pause a process instance on failure:
+    - Updates ProcessInstances.currentStage to `current_stage`
+    - Sets ProcessInstances.isInstanceRunning = 0
+    - Updates ProcessInstanceTransactions.currentStage (if tid.json exists)
+    """
+    # Import inside function to keep this module usable outside Airflow contexts.
+    from airflow.providers.mysql.hooks.mysql import MySqlHook
+
+    hook = MySqlHook(mysql_conn_id=mysql_conn_id)
+    conn = hook.get_conn()
+    cursor = conn.cursor()
+    try:
+        sync_stage_status(
+            cursor,
+            process_instance_id=process_instance_id,
+            current_stage=current_stage,
+            is_instance_running=0,
+        )
+        conn.commit()
+    finally:
+        try:
+            cursor.close()
+        finally:
+            conn.close()

@@ -15,6 +15,7 @@ from pymongo import MongoClient
 from openai import OpenAI
 from opik.integrations.openai import track_openai
 from transaction_status import sync_stage_status
+from idp_callbacks import task_failure_callback
 
 # Import OCR services
 from ocr_services.ocr_service_factory import get_ocr_service
@@ -421,6 +422,7 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "image_processing", "ocr"],
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     image_processing_task = PythonOperator(

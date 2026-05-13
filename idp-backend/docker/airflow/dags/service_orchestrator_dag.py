@@ -13,6 +13,8 @@ from pymongo import MongoClient
 import requests
 import time
 
+from idp_callbacks import task_failure_callback
+
 load_dotenv()
 
 # === Secrets === #
@@ -253,6 +255,9 @@ def log_to_mongo(process_instance_id, node_name, message, log_type=1, remark="")
         "nodeName": node_name,
         "logsDescription": message,
         "logType": log_type,
+        "isDeleted": False,
+        "isActive": True,
+        "remark": remark,
         "createdAt": datetime.utcnow()
     })
 
@@ -609,7 +614,8 @@ with DAG(
     default_args=DEFAULT_ARGS,
     start_date=datetime.now() - timedelta(days=1),
     schedule=None,
-    catchup=False
+    catchup=False,
+    on_failure_callback=task_failure_callback,
 ) as dag:
 
     create_tid = PythonOperator(
