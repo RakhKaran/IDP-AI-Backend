@@ -245,6 +245,18 @@ def deliver_documents(**context):
     conn.commit()
 
     shutil.rmtree(transaction_dir)
+    print("✅ Cleaned up transaction folder.")
+    
+    tid_path = os.path.join(process_instance_dir_path, "tid.json")
+    if os.path.exists(tid_path):
+        try:
+            os.remove(tid_path)
+            print("✅ Cleaned up tid.json file.")
+            log_to_mongo(process_instance_id, message="Cleaned up tid.json file.", node_name="Deliver", log_type=2)
+        except Exception as e:
+            print(f"⚠️ Warning: Could not remove tid.json: {e}")
+            log_to_mongo(process_instance_id, message=f"Warning: Could not remove tid.json: {e}", node_name="Deliver", log_type=3)
+    
     print("✅ Cleaned up local process instance folder.")
     log_to_mongo(process_instance_id, message = f"Cleaned up local process instance folder.", node_name = "Deliver", log_type=2)
 

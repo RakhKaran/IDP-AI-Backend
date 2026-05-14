@@ -15,6 +15,7 @@ AIRFLOW_API_URL = "http://airflow-airflow-apiserver-1:8080/api/v2"  # Use servic
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME")
 AIRFLOW_PASSWORD = os.getenv("AIRFLOW_PASSWORD")
 LOCAL_MODE = os.getenv("LOCAL_MODE", "false").lower() == "true"
+LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
 
 if LOCAL_MODE:
     AIRFLOW_API_URL = "http://localhost:8080/api/v2"
@@ -51,6 +52,27 @@ def get_auth_token():
         logging.error(f"Invalid response format: {str(e)}")
         raise
 
+def has_running_transaction(process_instance_id):
+    """Check if a transaction is currently running for the given process instance"""
+    tid_path = os.path.join(
+        LOCAL_DOWNLOAD_DIR,
+        f"process-instance-{process_instance_id}",
+        "tid.json"
+    )
+    
+    if os.path.exists(tid_path):
+        try:
+            with open(tid_path, "r", encoding="utf-8") as f:
+                tid_data = json.load(f)
+                transaction_id = tid_data.get("transactionId")
+                logging.info(f"Process instance {process_instance_id} has running transaction: {transaction_id}")
+                return True
+        except Exception as exc:
+            logging.warning(f"Failed to read tid.json for process_instance {process_instance_id}: {exc}")
+            return False
+    
+    return False
+
 def check_and_trigger_ingestion():
     """Main watchdog function"""
     try:
@@ -79,9 +101,14 @@ def check_and_trigger_ingestion():
 
         logging.info(f"Found {len(running_instances)} running instances")
 
-        # 3. Trigger service orchestrator DAG for each instance
+        # 3. Trigger service orchestrator DAG for each instance (if no transaction is running)
         for (instance_id,) in running_instances:
             try:
+                # Check if a transaction is already running for this instance
+                if has_running_transaction(instance_id):
+                    logging.info(f"Skipping instance {instance_id}: transaction already running")
+                    continue
+                
                 trigger_url = f"{AIRFLOW_API_URL}/dags/idp_service_orchestrator/dagRuns"
                 run_id = f"watchdog_triggered_{instance_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 payload = {
