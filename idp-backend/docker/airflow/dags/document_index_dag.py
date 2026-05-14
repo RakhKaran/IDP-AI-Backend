@@ -403,6 +403,11 @@ def run_document_index(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir, exist_ok=True)
+    transaction_dir = os.path.join(
+        process_instance_dir,
+        f"transaction-{_get_transaction_id(process_instance_id)}"
+    )
+    os.makedirs(transaction_dir, exist_ok=True)
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()
@@ -417,7 +422,7 @@ def run_document_index(**context):
             level="success",
         )
 
-        blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
+        blueprint = _fetch_blueprint(transaction_dir, process_instance_dir, cursor)
         node_component = _find_node_component(blueprint, {"document index", "index document"})
         if not node_component:
             raise ValueError("Document Index node not found in blueprint")
@@ -436,7 +441,7 @@ def run_document_index(**context):
         is_contract = _as_mcp_bool_string(node_component.get("isContract", False), default=False)
 
         if index_mode == "index_enriched_data":
-            cleaned_fields_path = os.path.join(process_instance_dir, "cleaned_extracted_fields.json")
+            cleaned_fields_path = os.path.join(transaction_dir, "cleaned_extracted_fields.json")
             notes = node_component.get("notes")
             if isinstance(notes, str) and notes.strip():
                 enriched_text = notes.strip()
@@ -452,8 +457,8 @@ def run_document_index(**context):
             }
         else:
             pdf_files = [
-                os.path.join(process_instance_dir, name)
-                for name in os.listdir(process_instance_dir)
+                os.path.join(transaction_dir, name)
+                for name in os.listdir(transaction_dir)
                 if name.lower().endswith(".pdf")
             ]
             if not pdf_files:
@@ -549,7 +554,7 @@ def run_document_index(**context):
             mcp_response = _invoke_mcp_tool(tool_name, tool_args, mcp_session_id)
             _raise_if_mcp_tool_error(mcp_response)
 
-        response_path = os.path.join(process_instance_dir, "mcp_document_index_response.json")
+        response_path = os.path.join(transaction_dir, "mcp_document_index_response.json")
         _write_json(response_path, mcp_response)
 
         document_ids = _extract_document_ids(mcp_response)

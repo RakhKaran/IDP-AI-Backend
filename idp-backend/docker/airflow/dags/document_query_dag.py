@@ -272,7 +272,12 @@ def run_document_query(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir, exist_ok=True)
-    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+    transaction_dir = os.path.join(
+        process_instance_dir,
+        f"transaction-{_get_transaction_id(process_instance_id)}"
+    )
+    os.makedirs(transaction_dir, exist_ok=True)
+    mcp_context_path = os.path.join(transaction_dir, "mcp_context.json")
     mcp_context = _read_json(mcp_context_path, {})
 
     process_id = str(mcp_context.get("process_id") or "").strip()
@@ -292,7 +297,7 @@ def run_document_query(**context):
         transaction_id = sync_stage_status(cursor, process_instance_id, "Document Query", 1)
         conn.commit()
 
-        blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
+        blueprint = _fetch_blueprint(process_instance_id, transaction_dir, cursor)
         node_component = _find_node_component(blueprint, {"document query"})
         if not node_component:
             raise ValueError("Document Query node not found in blueprint")
@@ -383,7 +388,7 @@ def run_document_query(**context):
         print("query response : ", mcp_response)
         _raise_if_mcp_tool_error(mcp_response)
 
-        response_path = os.path.join(process_instance_dir, "mcp_document_query_response.json")
+        response_path = os.path.join(transaction_dir, "mcp_document_query_response.json")
         _write_json(response_path, mcp_response)
 
         mcp_context["document_query_response_path"] = response_path

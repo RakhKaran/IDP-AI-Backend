@@ -35,7 +35,18 @@ LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
 openai.api_key = os.getenv("OPENAI_API_KEY")  # from .env
 if not openai.api_key or not openai.api_key.startswith("sk-") and not openai.api_key.startswith("sk-proj-"):
     raise EnvironmentError("❌ OpenAI API key missing or invalid. Please set OPENAI_API_KEY as an environment variable.")   
-    
+
+def _get_transaction_id(process_instance_id):
+    tid_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}", "tid.json")
+    if not os.path.exists(tid_path):
+        return None
+    try:
+        with open(tid_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("transactionId")
+    except Exception as exc:
+        print(f"Warning: failed to read transaction id from {tid_path}: {exc}")
+        return None
+      
 def get_auth_token():
     """Get JWT token from Airflow API"""
     auth_url = f"{AIRFLOW_API_URL.replace('/api/v2', '')}/auth/token"
@@ -91,7 +102,9 @@ def validate_extracted_fields(**context):
     
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, "process-instance-" + str(process_instance_id))
     os.makedirs(process_instance_dir_path, exist_ok=True)
-    EXTRACTED_FIELDS_PATH = os.path.join(process_instance_dir_path, "cleaned_extracted_fields.json")
+    transaction_dir = os.path.join(process_instance_dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    EXTRACTED_FIELDS_PATH = os.path.join(transaction_dir, "cleaned_extracted_fields.json")
 
     # Step 1: Update currentStage in ProcessInstances
     hook = MySqlHook(mysql_conn_id="idp_mysql")

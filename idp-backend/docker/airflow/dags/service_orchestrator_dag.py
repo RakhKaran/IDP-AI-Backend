@@ -144,6 +144,12 @@ def create_process_instance_transaction(current_stage: str, **context):
     )
     os.makedirs(process_instance_dir, exist_ok=True)
 
+    process_instance_transaction_dir = os.path.join(
+        process_instance_dir,
+        f"transaction-{transaction_id}"
+    )
+    os.makedirs(process_instance_transaction_dir, exist_ok=True)
+
     tid_path = os.path.join(process_instance_dir, "tid.json")
     with open(tid_path, "w") as f:
         json.dump(
@@ -307,9 +313,11 @@ def read_blueprint_and_graph(**context):
 
         # ✅ Save blueprint.json for worker DAGs
         process_instance_dir = f"/opt/airflow/downloaded_docs/process-instance-{process_instance_id}"
+        transaction_dir = f"{process_instance_dir}/transaction-{_get_transaction_id(process_instance_id)}"
         os.makedirs(process_instance_dir, exist_ok=True)
+        os.makedirs(transaction_dir, exist_ok=True)
 
-        blueprint_path = os.path.join(process_instance_dir, "blueprint.json")
+        blueprint_path = os.path.join(transaction_dir, "blueprint.json")
         with open(blueprint_path, "w") as f:
             json.dump(blueprint, f, indent=2)
 
@@ -347,9 +355,6 @@ def build_execution_plan(**context):
         f"{merge_type} merge activated for {len(run_ids)} branches",
         log_type=2
     )
-
-
-
 
     # -------- VALIDATION (CRITICAL) -------- #
     if not blueprint:

@@ -157,11 +157,13 @@ def highlight_and_upload(**context):
 
     dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(dir_path, exist_ok=True)
-    cleaned_fields_path = os.path.join(dir_path, "cleaned_extracted_fields.json")
-    highlighted_dir = os.path.join(dir_path, "highlighted_docs")
+    transaction_dir = os.path.join(dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    cleaned_fields_path = os.path.join(transaction_dir, "cleaned_extracted_fields.json")
+    highlighted_dir = os.path.join(transaction_dir, "highlighted_docs")
     os.makedirs(highlighted_dir, exist_ok=True)
 
-    response_body_path = os.path.join(dir_path, "response_body.json")
+    response_body_path = os.path.join(transaction_dir, "response_body.json")
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()

@@ -126,7 +126,9 @@ def fetch_blueprint_and_download_docs(**context):
 
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
-    BLUEPRINT_JSON_PATH = os.path.join(process_instance_dir_path, "blueprint.json")
+    transaction_dir = os.path.join(process_instance_dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    BLUEPRINT_JSON_PATH = os.path.join(transaction_dir, "blueprint.json")
     
     # Initialize MySQL connection
     hook = MySqlHook(mysql_conn_id="idp_mysql")
@@ -199,8 +201,8 @@ def fetch_blueprint_and_download_docs(**context):
             None
         )
         if not ingestion_node:
-            raise ValueError("No ingestion node found in blueprint")
             log_to_mongo(process_instance_id, message = f"No ingestion node found in blueprint", node_name = "Ingestion", log_type=1)
+            raise ValueError("No ingestion node found in blueprint")
 
         ingestion_config = ingestion_node.get("component", {})
         ingestion_url = ingestion_config.get("url")
@@ -208,8 +210,8 @@ def fetch_blueprint_and_download_docs(**context):
         ingestion_url = ingestion_url + process_instance_folder
 
         if not ingestion_url:
-            raise ValueError("Ingestion URL is missing in blueprint")
             log_to_mongo(process_instance_id, message = f"Ingestion URL is missing in blueprint", node_name = "Ingestion", log_type=1)
+            raise ValueError("Ingestion URL is missing in blueprint")
 
         # 6. Handle ingestion based on channelType
         channel_type = ingestion_config.get("channelType").lower()
@@ -227,14 +229,14 @@ def fetch_blueprint_and_download_docs(**context):
             try:
                 ftp_pass = decrypt_password(encrypted_ftp_pass, SECRET_KEY)
             except Exception:
-                raise ValueError("Unable to decrypt FTP password")
                 log_to_mongo(process_instance_id, message = f"Unable to decrypt FTP password", node_name = "Ingestion", log_type=1)
                 AUTO_EXECUTE_NEXT_NODE = 0
+                raise ValueError("Unable to decrypt FTP password")
 
             if not ftp_host or not ftp_path:
-                raise ValueError("FTP host or path is missing in blueprint")
                 log_to_mongo(process_instance_id, message = f"FTP host or path is missing in blueprint", node_name = "Ingestion", log_type=1)
                 AUTO_EXECUTE_NEXT_NODE = 0
+                raise ValueError("FTP host or path is missing in blueprint")
 
             print(f"🔌 Connecting to FTP server: {ftp_host}")
             ftp = FTP()
@@ -255,7 +257,7 @@ def fetch_blueprint_and_download_docs(**context):
                     log_to_mongo(process_instance_id, message = f"Skipping unsupported file: {file_name}", node_name = "Ingestion", log_type=3)
                     continue
 
-                file_path = os.path.join(process_instance_dir_path, file_name)
+                file_path = os.path.join(transaction_dir, file_name)
                 print(f"⬇️ Downloading {file_name} from FTP...")
                 try:
                     with open(file_path, "wb") as f:
@@ -275,9 +277,9 @@ def fetch_blueprint_and_download_docs(**context):
             ingestion_url = ingestion_url + process_instance_folder
 
             if not ingestion_url:
-                raise ValueError("Ingestion URL is missing in blueprint")
                 log_to_mongo(process_instance_id, message = f"Ingestion URL is missing in blueprint", node_name = "Ingestion", log_type=1)
                 AUTO_EXECUTE_NEXT_NODE = 0
+                raise ValueError("Ingestion URL is missing in blueprint")
 
             print(f"🔍 Fetching document list from HTTP: {ingestion_url}")
             response = requests.get(ingestion_url, timeout=30)
@@ -293,7 +295,7 @@ def fetch_blueprint_and_download_docs(**context):
                     continue
 
                 file_url = f"{old_ingestion_url}/file/{process_instance_folder}/{file_name}"
-                file_path = os.path.join(process_instance_dir_path, file_name)
+                file_path = os.path.join(transaction_dir, file_name)
 
                 print(f"⬇️ Downloading {file_name} from UI Portal...")
                 downloaded_count = 0

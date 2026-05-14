@@ -84,8 +84,11 @@ def deliver_documents(**context):
         raise ValueError("Missing process_instance_id in dag_run.conf")
     
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
-    BLUEPRINT_PATH = os.path.join(process_instance_dir_path, "blueprint.json")
-    RESPONSE_BODY_PATH = os.path.join(process_instance_dir_path, "cleaned_extracted_fields.json")
+    os.makedirs(process_instance_dir_path, exist_ok=True)
+    transaction_dir = os.path.join(process_instance_dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    BLUEPRINT_PATH = os.path.join(transaction_dir, "blueprint.json")
+    RESPONSE_BODY_PATH = os.path.join(transaction_dir, "cleaned_extracted_fields.json")
     print(f"Blueprint path:", BLUEPRINT_PATH)
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
@@ -93,8 +96,8 @@ def deliver_documents(**context):
     cursor = conn.cursor()
 
     if not os.path.exists(BLUEPRINT_PATH):
-        raise FileNotFoundError("❌ blueprint.json not found locally")
         log_to_mongo(process_instance_id, message = "blueprint.json not found locally", node_name = "Deliver", log_type=1)
+        raise FileNotFoundError("❌ blueprint.json not found locally")
     with open(BLUEPRINT_PATH, "r") as f:
         blueprint_json = json.load(f)
 
@@ -121,8 +124,8 @@ def deliver_documents(**context):
         print(f"FTP host:", ftp_host)
 
         if not all([ftp_host, ftp_username, ftp_encrypted_password, ftp_path]):
-            raise ValueError("Incomplete FTP details in blueprint")
             log_to_mongo(process_instance_id, message = "Incomplete FTP details in blueprint", node_name = "Deliver", log_type=1)
+            raise ValueError("Incomplete FTP details in blueprint")
 
         ftp_password = decrypt_password(ftp_encrypted_password, SECRET_KEY)
         remote_folder_path = f"{ftp_path}process-instance-{process_instance_id}"
@@ -138,9 +141,9 @@ def deliver_documents(**context):
                     ftp.mkd(folder)
                 ftp.cwd(folder)
 
-            for filename in os.listdir(process_instance_dir_path):
+            for filename in os.listdir(transaction_dir):
                 if filename.endswith(".pdf"):
-                    local_file_path = os.path.join(process_instance_dir_path, filename)
+                    local_file_path = os.path.join(transaction_dir, filename)
                     with open(local_file_path, "rb") as f:
                         ftp.storbinary(f"STOR {filename}", f)
                         print(f"📤 Uploaded: {filename}")
@@ -150,12 +153,12 @@ def deliver_documents(**context):
     elif channel_type in ["http", "https"]:
         post_url = component.get("url")
         if not post_url:
-            raise ValueError("HTTP/HTTPS URL missing in deliver blueprint")
             log_to_mongo(process_instance_id, message = f"HTTP/HTTPS URL missing in deliver blueprint", node_name = "Deliver", log_type=1)
+            raise ValueError("HTTP/HTTPS URL missing in deliver blueprint")
 
-        for filename in os.listdir(process_instance_dir_path):
+        for filename in os.listdir(transaction_dir):
             if filename.endswith(".pdf"):
-                file_path = os.path.join(process_instance_dir_path, filename)
+                file_path = os.path.join(transaction_dir, filename)
                 with open(file_path, 'rb') as f:
                     files = {"file": (filename, f)}
                     response = requests.post(post_url, files=files, timeout=30)
@@ -174,8 +177,8 @@ def deliver_documents(**context):
 
         deliver_api_url = "https://api.docognize.ai/process-instances/deliver-to-workflow" 
         if not deliver_api_url:
-            raise ValueError("DELIVER_TO_WORKFLOW_URL environment variable not set")
             log_to_mongo(process_instance_id, message="DELIVER_TO_WORKFLOW_URL not set", node_name="Deliver", log_type=1)
+            raise ValueError("DELIVER_TO_WORKFLOW_URL environment variable not set")
 
         payload = {
             "processInstanceId": process_instance_id,
@@ -207,15 +210,15 @@ def deliver_documents(**context):
             raise
 
     else:
-        raise ValueError(f"Unsupported channelType in deliver node: {channel_type}")
         log_to_mongo(process_instance_id, message = f"Unsupported channelType in deliver node: {channel_type}", node_name = "Deliver", log_type=1)
+        raise ValueError(f"Unsupported channelType in deliver node: {channel_type}")
 
     print(f"✅ Delivered {uploaded_count} documents via {channel_type.upper()}")
     log_to_mongo(process_instance_id, message = f"Delivered {uploaded_count} documents via {channel_type.upper()}", node_name = "Deliver", log_type=2)
 
     if not os.path.exists(RESPONSE_BODY_PATH):
-        raise FileNotFoundError("❌ cleaned_extracted_fields.json not found")
         log_to_mongo(process_instance_id, message = f"cleaned_extracted_fields.json not found", node_name = "Deliver", log_type=1)
+        raise FileNotFoundError("❌ cleaned_extracted_fields.json not found")
         
     with open(RESPONSE_BODY_PATH, "r") as f:
         response_data = json.load(f)
@@ -241,7 +244,7 @@ def deliver_documents(**context):
     transaction_id = sync_stage_status(cursor, process_instance_id, "Completed", 0)
     conn.commit()
 
-    shutil.rmtree(process_instance_dir_path)
+    shutil.rmtree(transaction_dir)
     print("✅ Cleaned up local process instance folder.")
     log_to_mongo(process_instance_id, message = f"Cleaned up local process instance folder.", node_name = "Deliver", log_type=2)
 

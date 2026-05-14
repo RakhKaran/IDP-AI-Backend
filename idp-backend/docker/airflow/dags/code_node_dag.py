@@ -194,6 +194,11 @@ def run_code_node(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir, exist_ok=True)
+    transaction_dir = os.path.join(
+        process_instance_dir,
+        f"transaction-{_get_transaction_id(process_instance_id)}"
+    )
+    os.makedirs(transaction_dir, exist_ok=True)
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()
@@ -203,7 +208,7 @@ def run_code_node(**context):
         transaction_id = sync_stage_status(cursor, process_instance_id, "Code", 1)
         conn.commit()
 
-        blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
+        blueprint = _fetch_blueprint(process_instance_id, transaction_dir, cursor)
         component = _find_node_component(blueprint)
         if not component:
             raise ValueError("Code node not found in blueprint")
@@ -212,7 +217,7 @@ def run_code_node(**context):
         if not code:
             raise ValueError("Code node is missing JavaScript code")
 
-        mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+        mcp_context_path = os.path.join(transaction_dir, "mcp_context.json")
         mcp_context = _read_json(mcp_context_path, {})
         execution_payload = {
             "code": code,
@@ -232,7 +237,7 @@ def run_code_node(**context):
         )
 
         completed, execution_result, execution_output_path = _execute_code(
-            process_instance_dir,
+            transaction_dir,
             code,
             execution_payload,
         )
@@ -267,7 +272,7 @@ def run_code_node(**context):
             "result": execution_result.get("result"),
             "logs": execution_result.get("logs", []),
         }
-        response_path = os.path.join(process_instance_dir, "code_node_response.json")
+        response_path = os.path.join(transaction_dir, "code_node_response.json")
         _write_json(response_path, response_payload)
 
         mcp_context["code_node_response_path"] = response_path

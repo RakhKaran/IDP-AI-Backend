@@ -69,7 +69,7 @@ def check_and_trigger_ingestion():
         cursor.execute("""
             SELECT id 
             FROM ProcessInstances 
-            WHERE isInstanceRunning = 1 AND currentStage IS NULL
+            WHERE isInstanceRunning = 1
         """)
         running_instances = cursor.fetchall()
         

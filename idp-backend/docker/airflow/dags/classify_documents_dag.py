@@ -414,7 +414,9 @@ def classify_documents(**context):
 
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
-    blueprint_path = os.path.join(process_instance_dir_path, "blueprint.json")
+    transaction_dir = os.path.join(process_instance_dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    blueprint_path = os.path.join(transaction_dir, "blueprint.json")
     ocr_logger = build_ocr_logger(process_instance_id, "Classification")
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
@@ -514,11 +516,11 @@ def classify_documents(**context):
                 log_type=0,
             )
 
-        for file_name in os.listdir(process_instance_dir_path):
+        for file_name in os.listdir(transaction_dir):
             if not file_name.lower().endswith(".pdf"):
                 continue
 
-            file_path = os.path.join(process_instance_dir_path, file_name)
+            file_path = os.path.join(transaction_dir, file_name)
 
             try:
                 print(f"Classifying: {file_name}")
@@ -615,7 +617,7 @@ def classify_documents(**context):
                 )
 
         with open(
-            os.path.join(process_instance_dir_path, "classified_documents.json"),
+            os.path.join(transaction_dir, "classified_documents.json"),
             "w",
             encoding="utf-8",
         ) as f:

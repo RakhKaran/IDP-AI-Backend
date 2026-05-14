@@ -782,6 +782,8 @@ def run_external_data_sources(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir, exist_ok=True)
+    transaction_dir = os.path.join(process_instance_dir, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
     conn = hook.get_conn()
@@ -796,7 +798,7 @@ def run_external_data_sources(**context):
             level="success",
         )
 
-        blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
+        blueprint = _fetch_blueprint(process_instance_id, transaction_dir, cursor)
         component = _find_node_component(blueprint)
         if not component:
             raise ValueError("External Data Sources node not found in blueprint")
@@ -804,13 +806,13 @@ def run_external_data_sources(**context):
         source_type = str(component.get("sourceType", "")).strip().lower()
         log_event(context, f"sourceType selected: {source_type}", level="info")
         if source_type == "api":
-            _run_api_connector(component, process_instance_id, process_instance_dir)
+            _run_api_connector(component, process_instance_id, transaction_dir)
         elif source_type == "website":
-            _run_website_connector(component, process_instance_id, process_instance_dir)
+            _run_website_connector(component, process_instance_id, transaction_dir)
         elif source_type == "db":
-            _run_db_connector(component, process_instance_id, process_instance_dir)
+            _run_db_connector(component, process_instance_id, transaction_dir)
         elif source_type == "bigdata":
-            _run_bigdata_connector(component, process_instance_id, process_instance_dir)
+            _run_bigdata_connector(component, process_instance_id, transaction_dir)
         else:
             raise ValueError(f"Unsupported sourceType '{source_type}' in External Data Sources node")
 

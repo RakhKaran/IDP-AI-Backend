@@ -119,10 +119,12 @@ def process_documents_with_ocr(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir_path, exist_ok=True)
+    transaction_dir = os.path.join(process_documents_with_ocr, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
     
-    ocr_output_dir = get_ocr_output_dir(process_instance_dir_path)
+    ocr_output_dir = get_ocr_output_dir(transaction_dir)
     
-    blueprint_path = os.path.join(process_instance_dir_path, "blueprint.json")
+    blueprint_path = os.path.join(transaction_dir, "blueprint.json")
     
     # Initialize MySQL connection
     hook = MySqlHook(mysql_conn_id="idp_mysql")
@@ -147,15 +149,15 @@ def process_documents_with_ocr(**context):
 
         # Check if blueprint exists
         if not os.path.exists(blueprint_path):
-            raise FileNotFoundError(
-                f"❌ blueprint.json not found at {blueprint_path}. "
-                f"Please run ingestion DAG first."
-            )
             log_to_mongo(
                 process_instance_id,
                 "ImageProcessing",
                 f"blueprint.json not found at {blueprint_path}",
                 log_type=1
+            )
+            raise FileNotFoundError(
+                f"❌ blueprint.json not found at {blueprint_path}. "
+                f"Please run ingestion DAG first."
             )
         
         # Load blueprint
@@ -232,7 +234,7 @@ def process_documents_with_ocr(**context):
         # Process each PDF file in the directory
         processed_files = []
         pdf_files = [
-            f for f in os.listdir(process_instance_dir_path)
+            f for f in os.listdir(transaction_dir)
             if f.lower().endswith('.pdf')
         ]
         
@@ -245,7 +247,7 @@ def process_documents_with_ocr(**context):
         print(f"📄 Found {len(pdf_files)} PDF file(s) to process")
         
         for pdf_filename in pdf_files:
-            pdf_path = os.path.join(process_instance_dir_path, pdf_filename)
+            pdf_path = os.path.join(transaction_dir, pdf_filename)
             
             try:
                 print(f"\n🔄 Processing: {pdf_filename}")
@@ -267,7 +269,7 @@ def process_documents_with_ocr(**context):
 
                 cache_payload = ensure_ocr_cache(
                     pdf_path=pdf_path,
-                    process_instance_dir=process_instance_dir_path,
+                    process_instance_dir=transaction_dir,
                     ocr_engine=ocr_engine,
                     config=ocr_config,
                     cleanup_service=cleanup_service,

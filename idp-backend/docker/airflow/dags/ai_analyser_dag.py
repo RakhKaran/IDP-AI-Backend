@@ -546,8 +546,10 @@ def run_ai_analyser(**context):
         f"process-instance-{process_instance_id}"
     )
     os.makedirs(process_instance_dir, exist_ok=True)
+    transaction_dir = os.path.join(process_instance_dir, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
 
-    mcp_context_path = os.path.join(process_instance_dir, "mcp_context.json")
+    mcp_context_path = os.path.join(transaction_dir, "mcp_context.json")
     mcp_context = _read_json(mcp_context_path, {})
     mcp_session_id, initialize_response = _initialize_mcp_session()
     mcp_context["mcp_session_id"] = mcp_session_id
@@ -562,13 +564,13 @@ def run_ai_analyser(**context):
         transaction_id = sync_stage_status(cursor, process_instance_id, "AI Analyser", 1)
         conn.commit()
 
-        blueprint = _fetch_blueprint(process_instance_id, process_instance_dir, cursor)
+        blueprint = _fetch_blueprint(process_instance_id, transaction_dir, cursor)
         component = _find_node_component(blueprint)
         if not component:
             raise ValueError("AI Analyser node not found in blueprint")
 
         analysis_type = str(component.get("analysisType") or "newsExtraction").strip()
-        runtime_values = _resolve_runtime_values(component, process_instance_dir, mcp_context)
+        runtime_values = _resolve_runtime_values(component, transaction_dir, mcp_context)
 
         if analysis_type == "newsExtraction":
             _run_news_extraction(
@@ -576,7 +578,7 @@ def run_ai_analyser(**context):
                 runtime_values,
                 mcp_session_id,
                 process_instance_id,
-                process_instance_dir,
+                transaction_dir,
             )
         elif analysis_type == "riskAssessment":
             _run_risk_assessment(
@@ -584,7 +586,7 @@ def run_ai_analyser(**context):
                 runtime_values,
                 mcp_session_id,
                 process_instance_id,
-                process_instance_dir,
+                transaction_dir,
             )
         else:
             raise ValueError(f"Unsupported AI Analyser analysisType '{analysis_type}'")

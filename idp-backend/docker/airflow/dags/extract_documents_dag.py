@@ -497,10 +497,12 @@ def extract_fields_from_documents(**context):
 
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
-    extracted_fields_path = os.path.join(process_instance_dir_path, "extracted_fields.json")
-    cleaned_fields_path = os.path.join(process_instance_dir_path, "cleaned_extracted_fields.json")
-    classified_json_path = os.path.join(process_instance_dir_path, "classified_documents.json")
-    blueprint_path = os.path.join(process_instance_dir_path, "blueprint.json")
+    transaction_dir = os.path.join(process_instance_dir_path, f"transaction-{_get_transaction_id(process_instance_id)}")
+    os.makedirs(transaction_dir, exist_ok=True)
+    extracted_fields_path = os.path.join(transaction_dir, "extracted_fields.json")
+    cleaned_fields_path = os.path.join(transaction_dir, "cleaned_extracted_fields.json")
+    classified_json_path = os.path.join(transaction_dir, "classified_documents.json")
+    blueprint_path = os.path.join(transaction_dir, "blueprint.json")
     ocr_logger = build_ocr_logger(process_instance_id, "Extraction")
 
     hook = MySqlHook(mysql_conn_id="idp_mysql")
@@ -534,7 +536,7 @@ def extract_fields_from_documents(**context):
         total_skipped_pages = 0
 
         for file_name, doc_type in classified_docs.items():
-            doc_path = os.path.join(process_instance_dir_path, file_name)
+            doc_path = os.path.join(transaction_dir, file_name)
             if not os.path.exists(doc_path):
                 print(f"File not found: {file_name}")
                 log_to_mongo(process_instance_id, message=f"File not found: {file_name}", node_name="Extraction", log_type=3)
