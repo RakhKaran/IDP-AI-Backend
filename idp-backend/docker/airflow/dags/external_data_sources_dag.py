@@ -855,4 +855,5 @@ with DAG(
     external_data_sources_task = PythonOperator(
         task_id="run_external_data_sources",
         python_callable=run_external_data_sources,
+        on_failure_callback=task_failure_callback
     )

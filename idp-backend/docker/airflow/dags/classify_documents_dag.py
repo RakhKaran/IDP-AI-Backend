@@ -699,4 +699,5 @@ with DAG(
     classify_task = PythonOperator(
         task_id="classify_documents_task",
         python_callable=classify_documents,
+        on_failure_callback=task_failure_callback
     )

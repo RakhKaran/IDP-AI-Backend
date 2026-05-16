@@ -268,4 +268,5 @@ with DAG(
     integration_task = PythonOperator(
         task_id="run_integration",
         python_callable=run_integration,
+        on_failure_callback=task_failure_callback
     )

@@ -629,6 +629,7 @@ with DAG(
     run_task = PythonOperator(
         task_id="run_ai_analyser",
         python_callable=run_ai_analyser,
+        on_failure_callback=task_failure_callback
     )
 
     run_task

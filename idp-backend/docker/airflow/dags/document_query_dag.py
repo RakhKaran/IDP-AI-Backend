@@ -438,4 +438,5 @@ with DAG(
     query_task = PythonOperator(
         task_id="run_document_query",
         python_callable=run_document_query,
+        on_failure_callback=task_failure_callback
     )

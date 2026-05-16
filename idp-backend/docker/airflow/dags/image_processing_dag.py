@@ -430,5 +430,6 @@ with DAG(
     image_processing_task = PythonOperator(
         task_id="process_documents_with_ocr",
         python_callable=process_documents_with_ocr,
+        on_failure_callback=task_failure_callback
     )
 

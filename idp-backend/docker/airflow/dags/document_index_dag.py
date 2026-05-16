@@ -607,4 +607,5 @@ with DAG(
     index_task = PythonOperator(
         task_id="run_document_index",
         python_callable=run_document_index,
+        on_failure_callback=task_failure_callback
     )

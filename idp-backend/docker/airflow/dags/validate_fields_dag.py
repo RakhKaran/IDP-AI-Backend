@@ -251,4 +251,5 @@ with DAG(
     validate_task = PythonOperator(
         task_id="validate_extracted_fields",
         python_callable=validate_extracted_fields,
+        on_failure_callback=task_failure_callback
     )

@@ -453,4 +453,5 @@ with DAG(
     highlight_task = PythonOperator(
         task_id="highlight_extracted_fields",
         python_callable=highlight_and_upload,
+        on_failure_callback=task_failure_callback
     )

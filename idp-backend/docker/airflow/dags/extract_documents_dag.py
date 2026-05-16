@@ -742,4 +742,5 @@ with DAG(
     extract_task = PythonOperator(
         task_id="extract_fields_from_documents",
         python_callable=extract_fields_from_documents,
+        on_failure_callback=task_failure_callback
     )

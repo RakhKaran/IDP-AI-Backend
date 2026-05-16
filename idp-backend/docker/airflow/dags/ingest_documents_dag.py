@@ -384,4 +384,5 @@ with DAG(
     ingest_task = PythonOperator(
         task_id="fetch_and_download_documents",
         python_callable=fetch_blueprint_and_download_docs,
+        on_failure_callback=task_failure_callback
     )
