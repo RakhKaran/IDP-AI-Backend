@@ -169,9 +169,12 @@ def task_failure_callback(context):
     print("processs instance id:", process_instance_id)
     print("stage:", stage)
     print("error message:", error_message)
-    
+
     if process_instance_id:
-        # Clean up tid.json for failed transaction before pausing
+        # Pause instance so UI doesn't keep progressing it.
+        pause_process_instance(process_instance_id, 'failed')
+
+        # Clean up tid.json
         local_download_dir = os.getenv("LOCAL_DOWNLOAD_DIR", "/opt/airflow/downloaded_docs")
         tid_path = os.path.join(local_download_dir, f"process-instance-{process_instance_id}", "tid.json")
         if os.path.exists(tid_path):
@@ -180,6 +183,4 @@ def task_failure_callback(context):
                 print(f"✅ Cleaned up tid.json for failed process instance {process_instance_id}")
             except Exception as e:
                 print(f"⚠️ Warning: Could not remove tid.json: {e}")
-        
-        # Pause instance so UI doesn't keep progressing it.
-        pause_process_instance(process_instance_id, stage)
+
