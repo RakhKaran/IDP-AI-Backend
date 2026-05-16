@@ -166,6 +166,10 @@ def task_failure_callback(context):
         },
     )
 
+    print("processs instance id:", process_instance_id)
+    print("stage:", stage)
+    print("error message:", error_message)
+    
     if process_instance_id:
         # Clean up tid.json for failed transaction before pausing
         local_download_dir = os.getenv("LOCAL_DOWNLOAD_DIR", "/opt/airflow/downloaded_docs")
