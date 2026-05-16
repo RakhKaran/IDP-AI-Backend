@@ -271,5 +271,6 @@ with DAG(
 ) as dag:
     deliver_task = PythonOperator(
         task_id="deliver_documents",
-        python_callable=deliver_documents
+        python_callable=deliver_documents,
+        on_failure_callback=task_failure_callback
     )
