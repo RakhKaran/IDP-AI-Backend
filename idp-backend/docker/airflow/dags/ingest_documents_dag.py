@@ -122,7 +122,7 @@ def fetch_blueprint_and_download_docs(**context):
     log_event(context, "Ingestion started", level="info")
 
     global AUTO_EXECUTE_NEXT_NODE
-    valid_extensions = ['.pdf']
+    valid_extensions = ['.pdf', '.PDF']
 
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
@@ -207,11 +207,11 @@ def fetch_blueprint_and_download_docs(**context):
         ingestion_config = ingestion_node.get("component", {})
         ingestion_url = ingestion_config.get("url")
         old_ingestion_url = ingestion_url
-        ingestion_url = ingestion_url + process_instance_folder
+        # ingestion_url = ingestion_url + process_instance_folder
 
-        if not ingestion_url:
+        """ if not ingestion_url:
             log_to_mongo(process_instance_id, message = f"Ingestion URL is missing in blueprint", node_name = "Ingestion", log_type=1)
-            raise ValueError("Ingestion URL is missing in blueprint")
+            raise ValueError("Ingestion URL is missing in blueprint") """
 
         # 6. Handle ingestion based on channelType
         channel_type = ingestion_config.get("channelType").lower()
