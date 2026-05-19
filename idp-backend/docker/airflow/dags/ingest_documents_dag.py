@@ -174,8 +174,8 @@ def fetch_blueprint_and_download_docs(**context):
         cursor.execute("SELECT bluePrint FROM BluePrint WHERE id = %s", (blueprint_id,))
         blueprint_row = cursor.fetchone()
         if not blueprint_row or not blueprint_row[0]:
-            raise ValueError(f"No blueprint found for blueprint ID {blueprint_id}")
             log_to_mongo(process_instance_id, message = f"No blueprint found for blueprint ID {blueprint_id}", node_name = "Ingestion", log_type=1)
+            raise ValueError(f"No blueprint found for blueprint ID {blueprint_id}")
         
         blueprint_json = json.loads(blueprint_row[0])
 
@@ -225,6 +225,8 @@ def fetch_blueprint_and_download_docs(**context):
             ftp_host = ingestion_config.get("host")
             ftp_user = ingestion_config.get("userName", "anonymous")
             encrypted_ftp_pass = ingestion_config.get("password", "")
+
+            print(f"🔐 Decrypting FTP password...", SECRET_KEY)
 
             try:
                 ftp_pass = decrypt_password(encrypted_ftp_pass, SECRET_KEY)
