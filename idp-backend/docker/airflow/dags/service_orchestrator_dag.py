@@ -627,21 +627,25 @@ with DAG(
         task_id="create_process_instance_transaction",
         python_callable=create_process_instance_transaction,
         op_kwargs={"current_stage": "Ingestion"},
+        on_failure_callback=task_failure_callback
     )
 
     read_graph = PythonOperator(
         task_id="read_blueprint_and_graph",
-        python_callable=read_blueprint_and_graph
+        python_callable=read_blueprint_and_graph,
+        on_failure_callback=task_failure_callback
     )
 
     build_plan = PythonOperator(
         task_id="build_execution_plan",
-        python_callable=build_execution_plan
+        python_callable=build_execution_plan,
+        on_failure_callback=task_failure_callback
     )
 
     execute_plan = PythonOperator(
         task_id="execute_execution_plan",
-        python_callable=execute_execution_plan
+        python_callable=execute_execution_plan,
+        on_failure_callback=task_failure_callback
     )
 
     create_tid >> read_graph >> build_plan >> execute_plan
