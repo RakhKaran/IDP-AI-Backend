@@ -5,16 +5,8 @@ from datetime import datetime, timedelta
 import os
 import re
 import json
-from openai import OpenAI
-from opik.integrations.openai import track_openai
 import requests
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader
-from pymongo import MongoClient
-import joblib
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 from ocr_services.ocr_service_factory import get_ocr_service
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
@@ -40,14 +32,10 @@ if LOCAL_MODE:
 # === CONFIG ===
 LOCAL_DOWNLOAD_DIR = "/opt/airflow/downloaded_docs"
 ML_MODELS_DIR = "/opt/airflow/dags/ml_models"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OpenAI.api_key = OPENAI_API_KEY
 MONGO_DB_NAME = "idp"
 MONGO_COLLECTION = "LogEntry"
-mongo_client = MongoClient(MONGO_URI)
-mongo_collection = mongo_client[MONGO_DB_NAME][MONGO_COLLECTION]
-openai_client = OpenAI()
-openai_client = track_openai(openai_client, project_name="my-idp-project")
+_MONGO_COLLECTION_HANDLE = None
+_OPENAI_CLIENT = None
 
 
 def _get_transaction_id(process_instance_id):
@@ -62,10 +50,43 @@ def _get_transaction_id(process_instance_id):
         return None
 
 
-if not OpenAI.api_key or (
-    not OpenAI.api_key.startswith("sk-") and not OpenAI.api_key.startswith("sk-proj-")
-):
-    raise EnvironmentError("OpenAI API key missing or invalid. Please set OPENAI_API_KEY.")
+def _get_openai_client():
+    """
+    Lazily initialize OpenAI client.
+
+    Important: do not raise at DAG-parse time; Airflow will drop the DAG from
+    the serialized table if imports fail. Raise only when a task actually needs
+    the client.
+    """
+    global _OPENAI_CLIENT
+    if _OPENAI_CLIENT is not None:
+        return _OPENAI_CLIENT
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or (not api_key.startswith("sk-") and not api_key.startswith("sk-proj-")):
+        raise ValueError("OpenAI API key missing or invalid. Set OPENAI_API_KEY.")
+
+    from openai import OpenAI  # local import: avoid DAG parse failures if missing
+    from opik.integrations.openai import track_openai  # local import for same reason
+
+    client = OpenAI(api_key=api_key)
+    _OPENAI_CLIENT = track_openai(client, project_name="my-idp-project")
+    return _OPENAI_CLIENT
+
+
+def _get_mongo_collection():
+    global _MONGO_COLLECTION_HANDLE
+    if _MONGO_COLLECTION_HANDLE is not None:
+        return _MONGO_COLLECTION_HANDLE
+
+    if not MONGO_URI:
+        raise ValueError("MONGO_URI is not set.")
+
+    from pymongo import MongoClient  # local import: avoid DAG parse failures if missing
+
+    mongo_client = MongoClient(MONGO_URI)
+    _MONGO_COLLECTION_HANDLE = mongo_client[MONGO_DB_NAME][MONGO_COLLECTION]
+    return _MONGO_COLLECTION_HANDLE
 
 # ============================
 # ML CLASSIFICATION HELPERS
@@ -93,6 +114,7 @@ def _get_ocr_service():
 
 def _get_pdf_page_count(file_path: str) -> int:
     try:
+        from PyPDF2 import PdfReader
         reader = PdfReader(file_path)
         return len(reader.pages)
     except Exception:
@@ -153,6 +175,7 @@ def _extract_pdf_text_ml(file_path: str, component=None, max_pages=None, logger_
     ocr_service = _get_ocr_service()
 
     try:
+        from PyPDF2 import PdfReader
         reader = PdfReader(file_path)
         for i in range(pages_to_scan):
             try:
@@ -197,6 +220,7 @@ def _extract_pdf_text_ml(file_path: str, component=None, max_pages=None, logger_
 def _get_embedding_model():
     global _EMB_MODEL
     if _EMB_MODEL is None:
+        from sentence_transformers import SentenceTransformer
         _EMB_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
     return _EMB_MODEL
 
@@ -231,6 +255,8 @@ def _load_vector_assets(base_dir: str):
             "classify_vectorizer.pkl in the ML models directory."
         )
 
+    import joblib
+
     tfidf_data = joblib.load(tfidf_pkl)
     vectorizer = joblib.load(vectorizer_pkl)
     embeddings_data = joblib.load(embeddings_pkl) if embeddings_pkl else None
@@ -259,6 +285,9 @@ def classify_document_ml(
     Classify a PDF using prebuilt vectors (embeddings -> TF-IDF fallback).
     Returns a label or "Unknown".
     """
+    import numpy as np
+    from sklearn.metrics.pairwise import cosine_similarity
+
     try:
         assets = _load_vector_assets(base_dir)
     except Exception as e:
@@ -325,7 +354,7 @@ def log_to_mongo(process_instance_id, node_name, message, log_type=1, remark="")
             "remark": remark,
             "createdAt": datetime.utcnow(),
         }
-        mongo_collection.insert_one(log_entry)
+        _get_mongo_collection().insert_one(log_entry)
         print(f"Logged to MongoDB: {message}")
     except Exception as mongo_err:
         print(f"Failed to log to MongoDB: {mongo_err}")
@@ -570,6 +599,7 @@ def classify_documents(**context):
                     {accumulated_text[:6000]}
                     """
 
+                    openai_client = _get_openai_client()
                     response = openai_client.chat.completions.create(
                         model="gpt-4o",
                         messages=[{"role": "user", "content": prompt}],
@@ -689,7 +719,8 @@ def classify_documents(**context):
 
 with DAG(
     dag_id="classify_documents_dag",
-    start_date=datetime.now() - timedelta(days=1),
+    # Keep start_date stable; dynamic start dates can cause scheduler/serialization churn.
+    start_date=datetime(2024, 1, 1),
     schedule=None,
     catchup=False,
     tags=["idp", "classification"],
