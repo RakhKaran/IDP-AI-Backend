@@ -20,7 +20,7 @@ load_dotenv()
 
 
 # === Secrets === #
-SECRET_KEY = os.getenv("SECRET_KEY")  # Must be exactly 32 bytes
+SECRET_KEY = os.getenv("SECRET_KEY").encode("utf-8")  # Must be exactly 32 bytes
 MONGO_URI = os.getenv("MONGO_URI")
 INGESTION_URL = os.getenv("UI_PORTAL_INGESTION_URL") #Ingestion URL of UI portal
 
@@ -55,7 +55,7 @@ def _get_transaction_id(process_instance_id):
 def fix_base64_padding(s: str) -> str:
     return s + '=' * (-len(s) % 4)
 
-def decrypt_password(encrypted_base64: str, secret_key: bytes) -> str:
+def decrypt_password(encrypted_base64: str, secret_key: bytes, process_instance_id) -> str:
     try:
         encrypted_base64 = fix_base64_padding(encrypted_base64)
         raw = base64.b64decode(encrypted_base64)
@@ -229,7 +229,7 @@ def fetch_blueprint_and_download_docs(**context):
             print(f"🔐 Decrypting FTP password...", SECRET_KEY)
 
             try:
-                ftp_pass = decrypt_password(encrypted_ftp_pass, SECRET_KEY)
+                ftp_pass = decrypt_password(encrypted_ftp_pass, SECRET_KEY, process_instance_id)
             except Exception:
                 log_to_mongo(process_instance_id, message = f"Unable to decrypt FTP password", node_name = "Ingestion", log_type=1)
                 AUTO_EXECUTE_NEXT_NODE = 0
