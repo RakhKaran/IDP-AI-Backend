@@ -18,7 +18,6 @@ from sentence_transformers import SentenceTransformer
 from transaction_status import sync_stage_status
 from ocr_services.ocr_service_factory import get_ocr_service
 from ocr_services.ocr_cache_utils import ensure_ocr_cache, get_cached_document_text, get_cached_page_texts
-from idp_callbacks import task_failure_callback
 
 load_dotenv()
 
@@ -687,11 +686,9 @@ with DAG(
     schedule=None,
     catchup=False,
     tags=["idp", "classification"],
-    on_failure_callback=task_failure_callback
 ) as dag:
 
     classify_task = PythonOperator(
         task_id="classify_documents_task",
         python_callable=classify_documents,
-        on_failure_callback=task_failure_callback
     )
