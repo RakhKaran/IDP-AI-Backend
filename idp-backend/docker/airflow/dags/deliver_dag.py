@@ -130,6 +130,7 @@ def deliver_documents(**context):
         ftp_password = decrypt_password(ftp_encrypted_password, SECRET_KEY)
         remote_folder_path = f"{ftp_path.rstrip('/')}/process-instance-{process_instance_id}"
 
+        print('remote folder path', remote_folder_path)
         with FTP(ftp_host) as ftp:
             ftp.login(user=ftp_username, passwd=ftp_password)
             
