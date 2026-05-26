@@ -128,17 +128,22 @@ def deliver_documents(**context):
             raise ValueError("Incomplete FTP details in blueprint")
 
         ftp_password = decrypt_password(ftp_encrypted_password, SECRET_KEY)
-        remote_folder_path = f"{ftp_path}process-instance-{process_instance_id}"
+        remote_folder_path = f"{ftp_path.rstrip('/')}/process-instance-{process_instance_id}"
 
         with FTP(ftp_host) as ftp:
             ftp.login(user=ftp_username, passwd=ftp_password)
+            
             print(f"✅ Connected to FTP: {ftp_host}")
             log_to_mongo(process_instance_id, message = f"Connected to FTP: {ftp_host}", node_name = "Deliver", log_type=2)
 
             # Navigate and create folders
             for folder in remote_folder_path.strip("/").split("/"):
-                if folder not in ftp.nlst():
-                    ftp.mkd(folder)
+                try:
+                    if folder not in ftp.nlst():
+                        ftp.mkd(folder)
+                except Exception as e:
+                    print(f"Folder creation skipped/error: {e}")
+
                 ftp.cwd(folder)
 
             for filename in os.listdir(transaction_dir):
