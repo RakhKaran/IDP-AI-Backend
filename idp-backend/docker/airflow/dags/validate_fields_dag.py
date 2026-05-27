@@ -133,7 +133,7 @@ def validate_extracted_fields(**context):
             print("❌ Missing critical data in entry, skipping...")
             continue
 
-        doc_path = os.path.join(process_instance_dir_path, file_name)
+        doc_path = os.path.join(transaction_dir, file_name)
         if not os.path.exists(doc_path):
             print(f"❌ File missing: {file_name}")
             continue

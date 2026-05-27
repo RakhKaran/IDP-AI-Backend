@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import re
 import threading
+import os
 
 import numpy as np
 import cv2
@@ -38,6 +39,9 @@ class PaddleOCRService(BaseOCRService):
     ]
 
     def __init__(self):
+        # PaddleOCR downloads models on first run. Point the cache to a stable path
+        # (ideally a persistent/mounted volume) so tasks can reuse downloads.
+        os.environ.setdefault("PADDLEOCR_HOME", "/opt/airflow/.paddleocr")
         try:
             from paddleocr import PaddleOCR
             self._engine_cls = PaddleOCR
@@ -203,7 +207,7 @@ class PaddleOCRService(BaseOCRService):
     # MULTI VARIANTS
     # =====================================================
 
-    def _generate_variants(self, image):
+    def _generate_variants(self, image, *, include_original: bool = True):
         variants = []
 
         img = np.array(image.convert("RGB"))
@@ -229,8 +233,9 @@ class PaddleOCRService(BaseOCRService):
         v3 = cv2.filter2D(gray, -1, kernel)
         variants.append(cv2.cvtColor(v3, cv2.COLOR_GRAY2RGB))
 
-        # Variant 4 original
-        variants.append(img)
+        if include_original:
+            # Variant 4 original
+            variants.append(img)
 
         # Variant 5 softer threshold
         v5 = cv2.adaptiveThreshold(
@@ -333,29 +338,38 @@ class PaddleOCRService(BaseOCRService):
     def _extract_page_result(self, image, config=None):
         engine = self._get_engine(config)
 
-        variants = self._generate_variants(image)
+        config = config or {}
 
-        best = {
-            "text": "",
-            "confidence": 0.0
-        }
-
+        best = {"text": "", "confidence": 0.0}
         best_score = -1
 
+        # Fast path: try original image first; if it's "good enough", skip heavy preprocessing.
+        fast_first = config.get("fast_first", False)
+        fast_min_score = float(config.get("fast_min_score", 220.0))
+
+        if fast_first:
+            try:
+                original = np.array(image.convert("RGB"))
+                with self._ocr_call_lock:
+                    result = engine.ocr(original)
+                parsed = self._parse_result(result)
+                best_score = self._score_text(parsed)
+                best = parsed
+                if best_score >= fast_min_score:
+                    return best
+            except Exception:
+                pass
+
+        variants = self._generate_variants(image, include_original=not fast_first)
         for variant in variants:
             try:
-                # Guard native Paddle inference call; concurrent invocations can
-                # crash with allocator corruption in some environments.
                 with self._ocr_call_lock:
                     result = engine.ocr(variant)
                 parsed = self._parse_result(result)
-
                 score = self._score_text(parsed)
-
                 if score > best_score:
                     best_score = score
                     best = parsed
-
             except Exception:
                 continue
 

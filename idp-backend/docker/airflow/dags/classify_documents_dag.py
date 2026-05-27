@@ -116,6 +116,10 @@ def _get_classification_ocr_config(component=None, **overrides):
     # Enable parallel page OCR for classification by default.
     perf_config["parallel"] = True
     perf_config["max_workers"] = max(2, int(perf_config.get("max_workers", 2) or 2))
+    # Speed: for clean/scanned-clear docs, try original image OCR first and
+    # skip heavy preprocessing variants when result looks good.
+    perf_config["fast_first"] = True
+    perf_config["fast_min_score"] = float(perf_config.get("fast_min_score", 220.0))
 
     # Apply any overrides
     perf_config.update({key: value for key, value in overrides.items() if value is not None})

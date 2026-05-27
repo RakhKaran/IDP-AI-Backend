@@ -209,7 +209,7 @@ def highlight_and_upload(**context):
 
         pid = doc.get("processInstanceId")
 
-        pdf_path = os.path.join(dir_path, document_name)
+        pdf_path = os.path.join(transaction_dir, document_name)
         if not os.path.exists(pdf_path):
             continue
 
