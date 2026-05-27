@@ -3,14 +3,15 @@ FROM apache/airflow:3.0.1-python3.10
 USER root
 
 RUN apt-get update && apt-get install -y \
-    poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libtesseract-dev \
-    libgl1 \
-    fonts-dejavu \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+	    poppler-utils \
+	    tesseract-ocr \
+	    tesseract-ocr-eng \
+	    libtesseract-dev \
+	    libgl1 \
+	    fonts-dejavu \
+	    libreoffice \
+	    && apt-get clean \
+	    && rm -rf /var/lib/apt/lists/*
 
 USER airflow
 

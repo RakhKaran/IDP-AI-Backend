@@ -298,6 +298,13 @@ def fetch_blueprint_and_download_docs(**context):
                             f"Conversion skipped/failed for {os.path.basename(file_path)}: {conv.reason}",
                             log_type=3,
                         )
+                    elif conv.pipeline_pdf_path == file_path:
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"No conversion needed for {os.path.basename(file_path)} ({conv.reason})",
+                            log_type=0,
+                        )
                 except Exception as e:
                     print(f"❌ Failed to download {file_name}: {str(e)}")
                     log_to_mongo(process_instance_id, "Ingestion", f"Failed to Download Documents.", log_type=1)
@@ -359,6 +366,13 @@ def fetch_blueprint_and_download_docs(**context):
                             "Ingestion",
                             f"Conversion skipped/failed for {os.path.basename(file_path)}: {conv.reason}",
                             log_type=3,
+                        )
+                    elif conv.pipeline_pdf_path == file_path:
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"No conversion needed for {os.path.basename(file_path)} ({conv.reason})",
+                            log_type=0,
                         )
                 except Exception as e:
                     print(f"❌ Failed to download {file_name}: {str(e)}")
