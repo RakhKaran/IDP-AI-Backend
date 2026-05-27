@@ -15,6 +15,7 @@ from pymongo import MongoClient
 from transaction_status import sync_stage_status
 from idp_callbacks import task_failure_callback
 from idp_callbacks import log_event
+from document_services.document_conversion_service import normalize_to_pipeline_pdf
 
 load_dotenv() 
 
@@ -116,13 +117,25 @@ def fetch_blueprint_and_download_docs(**context):
     process_instance_id = context["dag_run"].conf.get("id")
     is_orchestrated = bool(context["dag_run"].conf.get("orchestrated", False))
     if not process_instance_id:
-        raise ValueError("Missing process_instance_id in dag_run.conf")
         log_to_mongo(process_instance_id, message = "Missing process_instance_id in dag_run.conf", node_name = "Ingestion", log_type=1)
+        raise ValueError("Missing process_instance_id in dag_run.conf")
         
     log_event(context, "Ingestion started", level="info")
 
     global AUTO_EXECUTE_NEXT_NODE
-    valid_extensions = ['.pdf', '.PDF']
+    valid_extensions = [
+        ".pdf",
+        ".PDF",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".tif",
+        ".tiff",
+        ".bmp",
+        ".webp",
+        ".docx",
+        ".doc",
+    ]
 
     process_instance_dir_path = os.path.join(LOCAL_DOWNLOAD_DIR, f"process-instance-{process_instance_id}")
     os.makedirs(process_instance_dir_path, exist_ok=True)
@@ -266,6 +279,25 @@ def fetch_blueprint_and_download_docs(**context):
                         ftp.retrbinary(f"RETR {file_name}", f.write)
                     downloaded_count += 1
                     log_to_mongo(process_instance_id, "Ingestion", f"Downloaded {downloaded_count} documents successfully", log_type=2)
+                    conv = normalize_to_pipeline_pdf(
+                        file_path,
+                        output_dir=transaction_dir,
+                        logger=lambda msg: log_to_mongo(process_instance_id, "Ingestion", msg, log_type=0),
+                    )
+                    if conv.converted and conv.pipeline_pdf_path and conv.pipeline_pdf_path != file_path:
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"Pipeline PDF ready: {os.path.basename(conv.pipeline_pdf_path)} (from {os.path.basename(file_path)})",
+                            log_type=2,
+                        )
+                    elif not conv.pipeline_pdf_path and conv.reason not in ("already_pdf", "unsupported_extension:.pdf"):
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"Conversion skipped/failed for {os.path.basename(file_path)}: {conv.reason}",
+                            log_type=3,
+                        )
                 except Exception as e:
                     print(f"❌ Failed to download {file_name}: {str(e)}")
                     log_to_mongo(process_instance_id, "Ingestion", f"Failed to Download Documents.", log_type=1)
@@ -309,6 +341,25 @@ def fetch_blueprint_and_download_docs(**context):
                                 f.write(chunk)
                     downloaded_count += 1
                     log_to_mongo(process_instance_id, "Ingestion", f"Downloaded {downloaded_count} documents successfully", log_type=2)
+                    conv = normalize_to_pipeline_pdf(
+                        file_path,
+                        output_dir=transaction_dir,
+                        logger=lambda msg: log_to_mongo(process_instance_id, "Ingestion", msg, log_type=0),
+                    )
+                    if conv.converted and conv.pipeline_pdf_path and conv.pipeline_pdf_path != file_path:
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"Pipeline PDF ready: {os.path.basename(conv.pipeline_pdf_path)} (from {os.path.basename(file_path)})",
+                            log_type=2,
+                        )
+                    elif not conv.pipeline_pdf_path and conv.reason not in ("already_pdf", "unsupported_extension:.pdf"):
+                        log_to_mongo(
+                            process_instance_id,
+                            "Ingestion",
+                            f"Conversion skipped/failed for {os.path.basename(file_path)}: {conv.reason}",
+                            log_type=3,
+                        )
                 except Exception as e:
                     print(f"❌ Failed to download {file_name}: {str(e)}")
                     log_to_mongo(process_instance_id, "Ingestion", f"Failed to Download Documents.", log_type=1)

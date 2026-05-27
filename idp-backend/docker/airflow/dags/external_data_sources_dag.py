@@ -526,15 +526,6 @@ def _connect_snowflake_mcp(component):
         raise ValueError("Snowflake password is required")
     if not warehouse:
         raise ValueError("Snowflake warehouse is required")
-
-    print("=== SNOWFLAKE CONFIG ===")
-    print("ACCOUNT:", account)
-    print("USER:", user)
-    print("WAREHOUSE:", warehouse)
-    print("DATABASE:", database)
-    print("SCHEMA:", schema)
-    print("ROLE:", role)
-    print("========================")
     
     snowflake_env = {
         "SNOWFLAKE_ACCOUNT": account,
