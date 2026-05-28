@@ -267,8 +267,6 @@ def highlight_and_upload(**context):
                 print(f"Validation failed for {field_name}: {e}")
                 log_to_mongo(process_instance_id, message = f"Validation failed for {field_name}: {e}", node_name = "Validation", log_type=1)
 
-            overall_score = round(score_sum / len(validated_fields)) if validated_fields else 0
-
             if validated_fields:
                 doc["extractedFields"] = validated_fields
             else:
@@ -280,6 +278,8 @@ def highlight_and_upload(**context):
                     }
                     for f in fields
                 ]
+
+        overall_score = round(score_sum / len(validated_fields)) if validated_fields else 0
 
         with open(cleaned_fields_path, "w") as f:
             json.dump(extracted_data, f, indent=2)
