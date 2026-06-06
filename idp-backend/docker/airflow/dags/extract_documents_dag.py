@@ -222,18 +222,18 @@ def page_contains_relevant_keywords(page_text, field_prompts, doc_type):
     return any(keyword and keyword in page_text_lower for keyword in keywords)
 
 
-def is_table_like_page(page_text):
-    lines = [line.strip() for line in page_text.splitlines() if line.strip()]
-    if not lines:
-        return False
+# def is_table_like_page(page_text):
+#     lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+#     if not lines:
+#         return False
 
-    numeric_tokens = re.findall(r"\b\d+(?:[.,]\d+)?\b", page_text)
-    lines_with_many_numbers = sum(1 for line in lines if len(re.findall(r"\d+", line)) >= 3)
-    separator_lines = sum(1 for line in lines if "|" in line or "\t" in line)
+#     numeric_tokens = re.findall(r"\b\d+(?:[.,]\d+)?\b", page_text)
+#     lines_with_many_numbers = sum(1 for line in lines if len(re.findall(r"\d+", line)) >= 3)
+#     separator_lines = sum(1 for line in lines if "|" in line or "\t" in line)
 
-    return (
-        len(numeric_tokens) >= 25 and lines_with_many_numbers >= 5
-    ) or separator_lines >= 4
+#     return (
+#         len(numeric_tokens) >= 25 and lines_with_many_numbers >= 5
+#     ) or separator_lines >= 4
 
 
 def parse_json_response(content):
@@ -609,16 +609,16 @@ def extract_fields_from_documents(**context):
                         )
                         continue
 
-                    if is_table_like_page(page_text):
-                        total_skipped_pages += 1
-                        print(f"Skipping page {page_num} of {file_name}: table/BOQ-like page")
-                        log_to_mongo(
-                            process_instance_id,
-                            message=f"Skipped page {page_num} of {file_name}: table/BOQ-like page",
-                            node_name="Extraction",
-                            log_type=3,
-                        )
-                        continue
+                    # if is_table_like_page(page_text):
+                    #     total_skipped_pages += 1
+                    #     print(f"Skipping page {page_num} of {file_name}: table/BOQ-like page")
+                    #     log_to_mongo(
+                    #         process_instance_id,
+                    #         message=f"Skipped page {page_num} of {file_name}: table/BOQ-like page",
+                    #         node_name="Extraction",
+                    #         log_type=3,
+                    #     )
+                    #     continue
 
                     current_fields = [field for field in field_prompts if field["variableName"] in remaining_fields]
                     if not current_fields:
