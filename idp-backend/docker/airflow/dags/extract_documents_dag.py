@@ -32,6 +32,10 @@ load_dotenv()
 
 AUTO_EXECUTE_NEXT_NODE = 1
 
+# Change 5: Set to True to re-enable keyword-based page filtering once extraction is stable.
+# When False, all pages are processed regardless of keyword presence.
+ENABLE_PAGE_FILTERING = False
+
 # === DAG Trigger CONFIG === #
 AIRFLOW_API_URL = "http://airflow-airflow-apiserver-1:8080/api/v2"
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME")
@@ -190,6 +194,24 @@ def normalize_extracted_payload(payload):
         return [normalize_extracted_payload(item) for item in payload]
     return normalize_extracted_value(payload)
 
+
+# Change 4: Fix common OCR merge errors before sending text to GPT.
+# Handles cases like "InsuranceAPA"→"Insurance APA", "PolicyNo"→"Policy No",
+# "AmountLAK"→"Amount LAK", and digits fused with letters.
+def cleanup_ocr_text(text):
+    if not text:
+        return text
+    # "InsuranceAPA" → "Insurance APA" (lowercase→uppercase-run boundary)
+    text = re.sub(r'([a-z])([A-Z]{2,})', r'\1 \2', text)
+    # "PolicyNo" → "Policy No" (CamelCase word boundaries)
+    text = re.sub(r'([A-Z][a-z]+)([A-Z][a-z]+)', r'\1 \2', text)
+    # "Total100" → "Total 100", "100Baht" → "100 Baht"
+    text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+    text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+    # Collapse multiple spaces created by replacements above
+    text = re.sub(r' {2,}', ' ', text)
+    return text
+
 def detect_line_number(page_text, value):
     try:
         target = str(value).strip().lower()
@@ -255,6 +277,8 @@ def parse_json_response(content):
             raise
 
 
+# Changes 1, 2, 8: Generic prompt (no work-order bias), 7000-char context window,
+# explicit multi-line / table-aware extraction instructions.
 def build_multi_field_prompt(doc_type, field_prompts, page_text):
     field_lines = []
     for field in field_prompts:
@@ -268,36 +292,58 @@ def build_multi_field_prompt(doc_type, field_prompts, page_text):
 
     fields_block = "\n".join(field_lines)
 
-    return f"""
-This is a Work Order / Contract document for document type "{doc_type}".
-Extract relevant structured fields carefully.
+    # Change 4: clean OCR artifacts before building the prompt
+    cleaned_text = cleanup_ocr_text(page_text)
+    # Change 2: increased from 4000 to 7000 characters
+    truncated_text = cleaned_text[:7000]
 
-Extract the following fields from the document text.
+    return f"""You are extracting structured data from a scanned "{doc_type}" document.
 
-Fields:
+The text below was produced by OCR and may contain:
+- Merged words (e.g. "InsuranceAPA", "PolicyNo", "AmountLAK")
+- Broken table rows where a value appears on the line directly below its label
+- Missing spaces between words or between a word and a number
+- Misplaced or reordered values due to column misalignment
+- OCR character substitutions (e.g. "0" read as "O", "1" as "l")
+
+Extraction guidance:
+- If a label and its value are on separate lines, look at the 1-2 lines immediately below the label.
+- Monetary amounts and totals often appear BELOW their label rather than beside it.
+- Patient, insured, or policyholder names may appear on the line following the name label.
+- Hospital, clinic, or provider names usually appear in the document header (first few lines).
+- Policy numbers, member IDs, and claim numbers may appear in a section header or on a separate page.
+- Dates may be written as DD/MM/YYYY, MM-DD-YYYY, YYYY-MM-DD, or in long-form (e.g. "15 March 2024").
+- For billing, invoice, and medical-charge tables, each line item may span multiple lines.
+
+Fields to extract:
 {fields_block}
 
-Rules:
-- Return JSON only.
-- Use the variable names exactly as keys.
-- If a field is not found, return "N/A".
-- If a value is numeric, return digits only when possible.
-- Do not infer BOQ/table rows or fabricate values.
+Return ONLY a valid JSON object using the exact variable names as keys.
+If a field is not present in the text, return "N/A" for that key.
+Never fabricate or infer values that are not explicitly present in the text.
 
-Text:
-{page_text[:4000]}
+Document text:
+{truncated_text}
 """
 
 
-def extract_all_fields_from_page(doc_type, field_prompts, page_text):
+# Change 3: Added page_num for debug logging; logs request metadata and raw response.
+def extract_all_fields_from_page(doc_type, field_prompts, page_text, page_num=None):
     prompt = build_multi_field_prompt(doc_type, field_prompts, page_text)
+    field_names = [f.get("variableName", "") for f in field_prompts]
+    log.info(
+        f"[GPT REQUEST] doc_type={doc_type!r} | page={page_num} | "
+        f"fields={field_names} | prompt_len={len(prompt)}"
+    )
     response = openai_client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         timeout=30,
     )
-    return parse_json_response(response.choices[0].message.content.strip())
+    raw_content = response.choices[0].message.content.strip()
+    log.info(f"[GPT RESPONSE] page={page_num} | raw={raw_content[:600]!r}")
+    return parse_json_response(raw_content)
 
 
 def ml_extract_text_from_pdf(pdf_path, max_pages=5, logger_callback=None):
@@ -598,7 +644,10 @@ def extract_fields_from_documents(**context):
                         log_type=0,
                     )
 
-                    if not page_contains_relevant_keywords(page_text, field_prompts, doc_type):
+                    # Change 5: keyword filtering disabled (ENABLE_PAGE_FILTERING=False) so that
+                    # insurance cards, medical bills, and claim forms are not skipped.
+                    # Change 6: table-heavy pages (invoices, billing summaries) must also pass through.
+                    if ENABLE_PAGE_FILTERING and not page_contains_relevant_keywords(page_text, field_prompts, doc_type):
                         total_skipped_pages += 1
                         print(f"Skipping page {page_num} of {file_name}: no relevant keywords")
                         log_to_mongo(
@@ -626,9 +675,11 @@ def extract_fields_from_documents(**context):
 
                     try:
                         total_api_calls += 1
-                        extracted_payload = extract_all_fields_from_page(doc_type, current_fields, page_text)
+                        # Change 3: pass page_num so GPT debug logs include it
+                        extracted_payload = extract_all_fields_from_page(doc_type, current_fields, page_text, page_num=page_num)
                         extracted_payload = normalize_extracted_payload(extracted_payload)
 
+                        newly_extracted = []
                         for field in current_fields:
                             field_name = field["variableName"]
                             value = extracted_payload.get(field_name, "N/A") if isinstance(extracted_payload, dict) else "N/A"
@@ -636,20 +687,29 @@ def extract_fields_from_documents(**context):
                                 continue
                             if value in [None, "", [], {}]:
                                 continue
-                            
-                            line_no = detect_line_number(page_text, value)
 
+                            line_no = detect_line_number(page_text, value)
                             extracted[field_name] = {
                                 "value": value,
                                 "pageNumber": page_num,
                                 "lineNumber": line_no
                             }
-
                             remaining_fields.discard(field_name)
+                            newly_extracted.append(field_name)
 
+                        # Change 7: per-page extraction diagnostics
+                        log.info(
+                            f"[DIAG] page={page_num} | ocr_len={len(page_text)} | "
+                            f"remaining_fields={len(current_fields)} | "
+                            f"gpt_returned_values={len(newly_extracted) > 0} | "
+                            f"extracted={newly_extracted}"
+                        )
                         log_to_mongo(
                             process_instance_id,
-                            message=f"GenAI extraction API call #{total_api_calls} completed for {file_name} page {page_num}",
+                            message=(
+                                f"GenAI extraction API call #{total_api_calls} completed for "
+                                f"{file_name} page {page_num} | extracted={newly_extracted}"
+                            ),
                             node_name="Extraction",
                             log_type=0,
                         )
