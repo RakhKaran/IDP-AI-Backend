@@ -26,8 +26,8 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 # === IDP API CONFIG === #
 IDP_API_URL = os.getenv("IDP_API_URL", "http://localhost:3057")
-IDP_API_USERNAME = os.getenv("IDP_API_USERNAME", "")
-IDP_API_PASSWORD = os.getenv("IDP_API_PASSWORD", "")
+IDP_API_USERNAME = os.getenv("IDP_API_USERNAME", "admin@gmail.com")
+IDP_API_PASSWORD = os.getenv("IDP_API_PASSWORD", "Admin@1234")
 
 # === DAG Trigger CONFIG === #
 AIRFLOW_API_URL = "http://airflow-airflow-apiserver-1:8080/api/v2"
