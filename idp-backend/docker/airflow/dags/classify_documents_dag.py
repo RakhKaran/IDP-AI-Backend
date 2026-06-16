@@ -24,6 +24,11 @@ load_dotenv()
 AUTO_EXECUTE_NEXT_NODE = 1
 MONGO_URI = os.getenv("MONGO_URI")
 
+# === IDP API CONFIG === #
+IDP_API_URL = os.getenv("IDP_API_URL", "http://localhost:3057")
+IDP_API_USERNAME = os.getenv("IDP_API_USERNAME", "")
+IDP_API_PASSWORD = os.getenv("IDP_API_PASSWORD", "")
+
 # === DAG Trigger CONFIG === #
 AIRFLOW_API_URL = "http://airflow-airflow-apiserver-1:8080/api/v2"
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME")
@@ -406,6 +411,168 @@ def extract_text_per_page(pdf_path, component=None, max_pages=None, logger_callb
         raise RuntimeError(f"OCR failed: {e}")
 
 
+def _get_idp_auth_token():
+    """Authenticate with the IDP API and return a Bearer token."""
+    resp = requests.post(
+        f"{IDP_API_URL}/login",
+        json={"email": IDP_API_USERNAME, "password": IDP_API_PASSWORD},
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json().get("token") or resp.json().get("accessToken")
+
+
+def _get_idp_headers(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def sync_classified_to_api(process_instance_id, transaction_id, results, cursor):
+    """
+    Pipeline:
+    1. Fetch existing ProcessInstanceFiles for this process instance (dedup check).
+    2. For each newly classified document:
+       a. If not already stored → upload the file to /files/{folderName} → get fileUrl.
+       b. Look up DocumentType id by classifiedType label.
+       c. POST /process-instance-files to persist the record.
+    3. For every document (new or existing) → POST /process-instance-transaction-documents
+       to link it to the current transaction.
+    """
+    if not IDP_API_USERNAME or not IDP_API_PASSWORD:
+        print("IDP_API_USERNAME/IDP_API_PASSWORD not set – skipping API sync")
+        return
+
+    try:
+        token = _get_idp_auth_token()
+        headers = _get_idp_headers(token)
+    except Exception as exc:
+        print(f"IDP API auth failed – skipping sync: {exc}")
+        return
+
+    # --- 1. Get processInstanceFolderName from DB ---
+    cursor.execute(
+        "SELECT processInstanceFolderName FROM ProcessInstances WHERE id = %s",
+        (process_instance_id,),
+    )
+    row = cursor.fetchone()
+    folder_name = (row[0] if row else None) or ""
+
+    # --- 2. Fetch existing files for dedup ---
+    try:
+        existing_resp = requests.get(
+            f"{IDP_API_URL}/process-instance-files/by-instance/{process_instance_id}",
+            headers=headers,
+            timeout=10,
+        )
+        existing_resp.raise_for_status()
+        existing_files = {f["documentName"]: f["id"] for f in existing_resp.json().get("data", [])}
+    except Exception as exc:
+        print(f"Failed to fetch existing files – skipping sync: {exc}")
+        return
+
+    transaction_dir = os.path.join(
+        LOCAL_DOWNLOAD_DIR,
+        f"process-instance-{process_instance_id}",
+        f"transaction-{transaction_id}",
+    )
+
+    for file_name, classified_type in results.items():
+        if classified_type.startswith("Error:") or classified_type == "Unknown":
+            continue
+
+        file_path = os.path.join(transaction_dir, file_name)
+        if not os.path.exists(file_path):
+            print(f"File not found on disk, skipping: {file_path}")
+            continue
+
+        # --- 3a. Upload file if it's new ---
+        if file_name in existing_files:
+            file_id = existing_files[file_name]
+            print(f"Document '{file_name}' already exists (id={file_id}), skipping upload")
+        else:
+            # Upload file
+            try:
+                with open(file_path, "rb") as fh:
+                    upload_resp = requests.post(
+                        f"{IDP_API_URL}/files/{folder_name}",
+                        files={"file": (file_name, fh, "application/pdf")},
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=60,
+                    )
+                upload_resp.raise_for_status()
+                upload_data = upload_resp.json()
+                file_url = upload_data.get("files", [{}])[0].get("fileUrl", "")
+            except Exception as exc:
+                print(f"File upload failed for '{file_name}': {exc}")
+                log_to_mongo(process_instance_id, "Classification", f"File upload failed for '{file_name}': {exc}", log_type=1)
+                continue
+
+            # --- 3b. Resolve documentTypeId ---
+            doc_type_id = None
+            try:
+                dt_filter = json.dumps({"where": {"documentType": classified_type}, "limit": 1})
+                dt_resp = requests.get(
+                    f"{IDP_API_URL}/document-types",
+                    params={"filter": dt_filter},
+                    headers=headers,
+                    timeout=10,
+                )
+                dt_resp.raise_for_status()
+                dt_list = dt_resp.json()
+                if dt_list:
+                    doc_type_id = dt_list[0].get("id")
+            except Exception as exc:
+                print(f"DocumentType lookup failed for '{classified_type}': {exc}")
+
+            # --- 3c. Create ProcessInstanceFile record ---
+            try:
+                payload = {
+                    "documentName": file_name,
+                    "fileUrl": file_url,
+                    "classifiedType": classified_type,
+                    "metadata": {"originalFileName": file_name, "transactionId": transaction_id},
+                    "processInstancesId": int(process_instance_id),
+                    "isActive": True,
+                    "isDeleted": False,
+                }
+                if doc_type_id:
+                    payload["documentTypeId"] = doc_type_id
+
+                create_resp = requests.post(
+                    f"{IDP_API_URL}/process-instance-files",
+                    json=payload,
+                    headers=headers,
+                    timeout=10,
+                )
+                create_resp.raise_for_status()
+                file_id = create_resp.json().get("id")
+                print(f"Created ProcessInstanceFile id={file_id} for '{file_name}'")
+                log_to_mongo(process_instance_id, "Classification", f"Stored file record id={file_id} for '{file_name}'", log_type=2)
+            except Exception as exc:
+                print(f"Failed to create ProcessInstanceFile for '{file_name}': {exc}")
+                log_to_mongo(process_instance_id, "Classification", f"Failed to store file record for '{file_name}': {exc}", log_type=1)
+                continue
+
+        # --- 4. Link file to this transaction ---
+        try:
+            link_resp = requests.post(
+                f"{IDP_API_URL}/process-instance-transaction-documents",
+                json={
+                    "processInstanceTransactionsId": int(transaction_id),
+                    "processInstanceFileId": file_id,
+                    "isActive": True,
+                    "isDeleted": False,
+                },
+                headers=headers,
+                timeout=10,
+            )
+            link_resp.raise_for_status()
+            print(f"Linked file id={file_id} to transaction id={transaction_id}")
+        except Exception as exc:
+            print(f"Failed to link file id={file_id} to transaction: {exc}")
+            log_to_mongo(process_instance_id, "Classification", f"Failed to link file to transaction: {exc}", log_type=1)
+
+
 def classify_documents(**context):
     process_instance_id = context["dag_run"].conf.get("id")
     is_orchestrated = bool(context["dag_run"].conf.get("orchestrated", False))
@@ -623,6 +790,10 @@ def classify_documents(**context):
         ) as f:
             json.dump(results, f)
             print("Classification results saved to classified_documents.json")
+
+        # Sync classified documents to API (upload files + create DB records + link to transaction)
+        current_transaction_id = _get_transaction_id(process_instance_id)
+        sync_classified_to_api(process_instance_id, current_transaction_id, results, cursor)
 
         for doc_type in target_labels:
             cursor.execute(
