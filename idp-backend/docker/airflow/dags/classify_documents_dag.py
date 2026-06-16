@@ -25,7 +25,7 @@ AUTO_EXECUTE_NEXT_NODE = 1
 MONGO_URI = os.getenv("MONGO_URI")
 
 # === IDP API CONFIG === #
-IDP_API_URL = os.getenv("IDP_API_URL", "http://localhost:3057")
+IDP_API_URL = os.getenv("IDP_API_URL", "https://api.docognize.ai")
 IDP_API_USERNAME = os.getenv("IDP_API_USERNAME", "admin@gmail.com")
 IDP_API_PASSWORD = os.getenv("IDP_API_PASSWORD", "Admin@1234")
 
