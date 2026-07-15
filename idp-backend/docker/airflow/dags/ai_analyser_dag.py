@@ -272,6 +272,16 @@ def _normalize_key(value):
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
 
+def _unwrap_field_value(value):
+    """Extracted fields are wrapped as {"value": ..., "pageNumber": ..., "lineNumber": ...}.
+    Return the inner scalar so callers get 'ACME...' instead of the whole wrapper dict."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if _normalize_key(key) == "value":
+                return inner
+    return value
+
+
 def _find_value_by_keys(payload, candidate_keys):
     normalized_candidates = {_normalize_key(key) for key in candidate_keys}
 
@@ -279,7 +289,7 @@ def _find_value_by_keys(payload, candidate_keys):
         if isinstance(value, dict):
             for key, nested_value in value.items():
                 if _normalize_key(key) in normalized_candidates and nested_value not in (None, "", [], {}):
-                    return nested_value
+                    return _unwrap_field_value(nested_value)
                 found = search(nested_value)
                 if found not in (None, "", [], {}):
                     return found
