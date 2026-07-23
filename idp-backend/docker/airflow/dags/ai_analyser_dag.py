@@ -397,6 +397,7 @@ def _resolve_runtime_values(component, process_instance_dir, mcp_context):
 
     if _to_bool(component.get("usePreviousNodeData"), default=False):
         for payload in upstream_payload.values():
+            print('payload: ', payload)
             if not company_name:
                 company_name = str(
                     _find_value_by_keys(payload, [
