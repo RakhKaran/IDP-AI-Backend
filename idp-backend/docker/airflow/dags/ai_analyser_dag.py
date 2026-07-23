@@ -407,7 +407,7 @@ def _resolve_runtime_values(component, process_instance_dir, mcp_context):
             if not company_id:
                 company_id = str(
                     _find_value_by_keys(payload, [
-                        "company_id", "companyId"
+                        "company_id", "companyId", "cin", "CIN"
                     ]) or ""
                 ).strip()
             if not cin:
